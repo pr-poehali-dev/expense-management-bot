@@ -4,89 +4,48 @@
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
+    --background: 220 20% 6%;
+    --foreground: 210 20% 92%;
 
-    --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
+    --card: 220 18% 9%;
+    --card-foreground: 210 20% 92%;
 
-    --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
+    --popover: 220 18% 9%;
+    --popover-foreground: 210 20% 92%;
 
-    --primary: 222.2 47.4% 11.2%;
-    --primary-foreground: 210 40% 98%;
+    --primary: 200 85% 52%;
+    --primary-foreground: 220 20% 6%;
 
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
+    --secondary: 220 16% 14%;
+    --secondary-foreground: 210 20% 75%;
 
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
+    --muted: 220 16% 12%;
+    --muted-foreground: 215 14% 50%;
 
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
+    --accent: 145 65% 42%;
+    --accent-foreground: 220 20% 6%;
 
-    --destructive: 0 84.2% 60.2%;
+    --destructive: 0 72% 55%;
     --destructive-foreground: 210 40% 98%;
 
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 222.2 84% 4.9%;
+    --border: 220 14% 16%;
+    --input: 220 14% 16%;
+    --ring: 200 85% 52%;
 
-    --radius: 0.5rem;
+    --radius: 0.375rem;
 
-    --sidebar-background: 0 0% 98%;
+    --income: 145 65% 42%;
+    --expense: 0 72% 55%;
+    --neutral: 200 85% 52%;
 
-    --sidebar-foreground: 240 5.3% 26.1%;
-
-    --sidebar-primary: 240 5.9% 10%;
-
-    --sidebar-primary-foreground: 0 0% 98%;
-
-    --sidebar-accent: 240 4.8% 95.9%;
-
-    --sidebar-accent-foreground: 240 5.9% 10%;
-
-    --sidebar-border: 220 13% 91%;
-
-    --sidebar-ring: 217.2 91.2% 59.8%;
-  }
-
-  .dark {
-    --background: 222.2 84% 4.9%;
-    --foreground: 210 40% 98%;
-
-    --card: 222.2 84% 4.9%;
-    --card-foreground: 210 40% 98%;
-
-    --popover: 222.2 84% 4.9%;
-    --popover-foreground: 210 40% 98%;
-
-    --primary: 210 40% 98%;
-    --primary-foreground: 222.2 47.4% 11.2%;
-
-    --secondary: 217.2 32.6% 17.5%;
-    --secondary-foreground: 210 40% 98%;
-
-    --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
-
-    --accent: 217.2 32.6% 17.5%;
-    --accent-foreground: 210 40% 98%;
-
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 210 40% 98%;
-
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 212.7 26.8% 83.9%;
-    --sidebar-background: 240 5.9% 10%;
-    --sidebar-foreground: 240 4.8% 95.9%;
-    --sidebar-primary: 224.3 76.3% 48%;
-    --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 240 3.7% 15.9%;
-    --sidebar-accent-foreground: 240 4.8% 95.9%;
-    --sidebar-border: 240 3.7% 15.9%;
-    --sidebar-ring: 217.2 91.2% 59.8%;
+    --sidebar-background: 220 22% 7%;
+    --sidebar-foreground: 210 16% 70%;
+    --sidebar-primary: 200 85% 52%;
+    --sidebar-primary-foreground: 220 20% 6%;
+    --sidebar-accent: 220 16% 12%;
+    --sidebar-accent-foreground: 210 20% 88%;
+    --sidebar-border: 220 14% 14%;
+    --sidebar-ring: 200 85% 52%;
   }
 }
 
@@ -96,6 +55,124 @@
   }
 
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground font-ibm;
+    font-feature-settings:
+      "kern" 1,
+      "liga" 1;
+  }
+
+  ::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+  }
+  ::-webkit-scrollbar-track {
+    background: hsl(var(--background));
+  }
+  ::-webkit-scrollbar-thumb {
+    background: hsl(var(--border));
+    border-radius: 2px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--muted-foreground));
+  }
+}
+
+@layer components {
+  .stat-card {
+    @apply bg-card border border-border rounded-md p-5 transition-all duration-200 hover:border-primary/30;
+  }
+
+  .nav-item {
+    @apply flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-all duration-150 cursor-pointer text-muted-foreground hover:text-foreground hover:bg-secondary;
+  }
+
+  .nav-item.active {
+    @apply text-primary bg-primary/10 hover:bg-primary/15;
+  }
+
+  .section-title {
+    @apply text-xs font-semibold uppercase tracking-widest text-muted-foreground;
+  }
+
+  .data-row {
+    @apply flex items-center justify-between py-3 border-b border-border/50 last:border-0 hover:bg-secondary/30 px-2 rounded transition-colors;
+  }
+
+  .badge-income {
+    @apply inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-emerald-500/10 text-emerald-400;
+  }
+
+  .badge-expense {
+    @apply inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-red-500/10 text-red-400;
+  }
+
+  .chat-bubble-bot {
+    @apply bg-secondary rounded-lg rounded-tl-sm px-4 py-3 text-sm max-w-[85%] text-foreground;
+  }
+
+  .chat-bubble-user {
+    @apply bg-primary/15 border border-primary/20 rounded-lg rounded-tr-sm px-4 py-3 text-sm max-w-[85%] text-foreground ml-auto;
+  }
+
+  .fin-input {
+    @apply w-full bg-muted border border-border rounded-md px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary/60 focus:ring-1 focus:ring-primary/30 transition-all;
+  }
+
+  .fin-btn-primary {
+    @apply bg-primary text-primary-foreground hover:bg-primary/90 px-4 py-2 rounded-md text-sm font-medium transition-colors disabled:opacity-50;
+  }
+
+  .fin-btn-secondary {
+    @apply bg-secondary text-foreground hover:bg-secondary/80 border border-border px-4 py-2 rounded-md text-sm font-medium transition-colors;
+  }
+}
+
+@layer utilities {
+  .font-ibm {
+    font-family: "IBM Plex Sans", sans-serif;
+  }
+  .font-mono-ibm {
+    font-family: "IBM Plex Mono", monospace;
+  }
+  .text-income {
+    color: hsl(var(--income));
+  }
+  .text-expense {
+    color: hsl(var(--expense));
+  }
+  .text-neutral {
+    color: hsl(var(--neutral));
+  }
+  .bg-income {
+    background-color: hsl(var(--income));
+  }
+  .bg-expense {
+    background-color: hsl(var(--expense));
+  }
+  .animate-fade-in {
+    animation: fadeIn 0.3s ease forwards;
+  }
+  .animate-slide-up {
+    animation: slideUp 0.35s ease forwards;
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
