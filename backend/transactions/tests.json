@@ -1,0 +1,20 @@
+{
+  "tests": [
+    {
+      "name": "GET all transactions",
+      "method": "GET",
+      "path": "/",
+      "expectedStatus": 200,
+      "expectedBody": {"transactions": [], "total": 0},
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "GET income transactions",
+      "method": "GET",
+      "path": "/?type=income",
+      "expectedStatus": 200,
+      "expectedBody": {"transactions": [], "total": 0},
+      "bodyMatcher": "partial"
+    }
+  ]
+}

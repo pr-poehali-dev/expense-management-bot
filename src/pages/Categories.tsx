@@ -1,16 +1,57 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Icon from '@/components/ui/icon';
-import { categories, transactions, formatCurrency } from '@/data/mockData';
+import { api, Category, Transaction } from '@/lib/api';
+import { formatCurrency } from '@/data/mockData';
 
 export default function Categories() {
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [activeTab, setActiveTab] = useState<'income' | 'expense'>('income');
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ name: '', type: 'income', color: '#22c55e' });
+  const [form, setForm] = useState({ name: '', type: 'income', color: '#22c55e', icon: 'Tag' });
 
-  const list = categories[activeTab];
+  useEffect(() => {
+    Promise.all([api.categories.list(), api.transactions.list()])
+      .then(([catRes, txRes]) => {
+        setCategories(catRes.categories);
+        setTransactions(txRes.transactions);
+      })
+      .finally(() => setLoading(false));
+  }, []);
 
-  function getCatTotal(id: string, type: string) {
-    return transactions.filter(t => t.type === type && t.category === id).reduce((s, t) => s + t.amount, 0);
+  const list = categories.filter(c => c.type === activeTab);
+
+  function getCatTotal(id: number) {
+    return transactions.filter(t => t.category_id === id).reduce((s, t) => s + t.amount, 0);
+  }
+  function getCatCount(id: number) {
+    return transactions.filter(t => t.category_id === id).length;
+  }
+
+  async function handleCreate() {
+    if (!form.name) return;
+    setSaving(true);
+    try {
+      const created = await api.categories.create(form);
+      setCategories(prev => [...prev, created]);
+      setForm({ name: '', type: 'income', color: '#22c55e', icon: 'Tag' });
+      setShowForm(false);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="p-6 flex items-center justify-center h-64">
+        <div className="flex items-center gap-3 text-muted-foreground text-sm">
+          <Icon name="Loader2" size={16} className="animate-spin" />
+          Загрузка...
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -26,7 +67,6 @@ export default function Categories() {
         </button>
       </div>
 
-      {/* Tabs */}
       <div className="flex gap-1 bg-secondary p-1 rounded-md w-fit">
         {(['income', 'expense'] as const).map(tab => (
           <button
@@ -39,20 +79,13 @@ export default function Categories() {
         ))}
       </div>
 
-      {/* New category form */}
       {showForm && (
         <div className="stat-card border-primary/30 animate-fade-in">
           <div className="section-title mb-4">Новая категория</div>
           <div className="grid grid-cols-3 gap-4">
             <div>
               <label className="block text-xs text-muted-foreground mb-1.5">Название</label>
-              <input
-                type="text"
-                placeholder="Название категории"
-                className="fin-input"
-                value={form.name}
-                onChange={e => setForm({ ...form, name: e.target.value })}
-              />
+              <input type="text" placeholder="Название категории" className="fin-input" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
             </div>
             <div>
               <label className="block text-xs text-muted-foreground mb-1.5">Тип</label>
@@ -64,47 +97,41 @@ export default function Categories() {
             <div>
               <label className="block text-xs text-muted-foreground mb-1.5">Цвет</label>
               <div className="flex items-center gap-2">
-                <input type="color" value={form.color} onChange={e => setForm({ ...form, color: e.target.value })}
-                  className="w-10 h-9 rounded border border-border bg-muted cursor-pointer" />
-                <input type="text" value={form.color} onChange={e => setForm({ ...form, color: e.target.value })}
-                  className="fin-input font-mono-ibm flex-1" />
+                <input type="color" value={form.color} onChange={e => setForm({ ...form, color: e.target.value })} className="w-10 h-9 rounded border border-border bg-muted cursor-pointer" />
+                <input type="text" value={form.color} onChange={e => setForm({ ...form, color: e.target.value })} className="fin-input font-mono-ibm flex-1" />
               </div>
             </div>
           </div>
           <div className="flex justify-end gap-2 mt-4">
             <button onClick={() => setShowForm(false)} className="fin-btn-secondary">Отмена</button>
-            <button className="fin-btn-primary flex items-center gap-2">
-              <Icon name="Check" size={14} />
-              Создать
+            <button onClick={handleCreate} disabled={saving || !form.name} className="fin-btn-primary flex items-center gap-2">
+              {saving ? <Icon name="Loader2" size={14} className="animate-spin" /> : <Icon name="Check" size={14} />}
+              {saving ? 'Создание...' : 'Создать'}
             </button>
           </div>
         </div>
       )}
 
-      {/* Categories grid */}
       <div className="grid grid-cols-2 gap-3">
+        {list.length === 0 && (
+          <div className="col-span-2 py-12 text-center text-sm text-muted-foreground">
+            Нет категорий. Создайте первую.
+          </div>
+        )}
         {list.map((cat) => {
-          const total = getCatTotal(cat.id, activeTab);
-          const count = transactions.filter(t => t.type === activeTab && t.category === cat.id).length;
+          const total = getCatTotal(cat.id);
+          const count = getCatCount(cat.id);
           return (
             <div key={cat.id} className="stat-card group">
               <div className="flex items-start justify-between">
                 <div className="flex items-center gap-3">
                   <div className="w-9 h-9 rounded-md flex items-center justify-center" style={{ backgroundColor: cat.color + '20' }}>
-                    <Icon name={cat.icon} size={16} style={{ color: cat.color }} />
+                    <Icon name={cat.icon} size={16} style={{ color: cat.color }} fallback="Tag" />
                   </div>
                   <div>
                     <div className="text-sm font-medium text-foreground">{cat.name}</div>
                     <div className="text-xs text-muted-foreground mt-0.5">{count} транзакций</div>
                   </div>
-                </div>
-                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <button className="w-6 h-6 flex items-center justify-center rounded hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors">
-                    <Icon name="Pencil" size={12} />
-                  </button>
-                  <button className="w-6 h-6 flex items-center justify-center rounded hover:bg-destructive/10 text-muted-foreground hover:text-red-400 transition-colors">
-                    <Icon name="Trash2" size={12} />
-                  </button>
                 </div>
               </div>
               <div className="mt-4">

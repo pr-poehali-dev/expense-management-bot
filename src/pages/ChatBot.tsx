@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import Icon from '@/components/ui/icon';
-import { transactions, categories, formatCurrency } from '@/data/mockData';
+import { api, Transaction, Category } from '@/lib/api';
+import { formatCurrency } from '@/data/mockData';
 
 interface Message {
   id: number;
@@ -9,69 +10,87 @@ interface Message {
   time: string;
 }
 
-const totalIncome = transactions.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
-const totalExpense = transactions.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
-
 function getTime() {
   return new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
 }
 
-function detectCategory(text: string): string | null {
+function detectCategory(text: string, cats: Category[]): Category | null {
   const lower = text.toLowerCase();
-  const allCats = [...categories.income, ...categories.expense];
-  for (const cat of allCats) {
-    if (lower.includes(cat.name.toLowerCase())) return cat.name;
+  for (const cat of cats) {
+    if (lower.includes(cat.name.toLowerCase())) return cat;
   }
-  if (lower.includes('еда') || lower.includes('продукт') || lower.includes('обед')) return 'Питание';
-  if (lower.includes('такси') || lower.includes('бензин') || lower.includes('метро')) return 'Транспорт';
-  if (lower.includes('зарплат') || lower.includes('аванс')) return 'Зарплата';
-  if (lower.includes('аренда')) return lower.includes('получ') ? 'Аренда (доход)' : 'Жильё и ЖКХ';
+  const keywordMap: Record<string, string[]> = {
+    'Питание': ['еда', 'продукт', 'обед', 'ужин', 'завтрак', 'кафе', 'ресторан'],
+    'Транспорт': ['такси', 'бензин', 'метро', 'автобус', 'парковка'],
+    'Зарплата': ['зарплат', 'аванс', 'оклад'],
+    'Жильё и ЖКХ': ['аренда', 'квартира', 'коммунал', 'жкх'],
+    'Здоровье': ['аптека', 'лекарств', 'врач', 'медицин'],
+    'Развлечения': ['кино', 'театр', 'концерт', 'игр'],
+  };
+  for (const [name, keywords] of Object.entries(keywordMap)) {
+    if (keywords.some(k => lower.includes(k))) {
+      return cats.find(c => c.name === name) ?? null;
+    }
+  }
   return null;
 }
 
-function generateResponse(text: string): string {
+function generateResponse(
+  text: string,
+  cats: Category[],
+  transactions: Transaction[],
+  totals: { total_income: number; total_expense: number }
+): string {
   const lower = text.toLowerCase();
+  const { total_income, total_expense } = totals;
+  const balance = total_income - total_expense;
+  const savingsRate = total_income > 0 ? Math.round((balance / total_income) * 100) : 0;
 
   if (lower.includes('баланс') || lower.includes('сколько') || lower.includes('остаток')) {
-    return `Текущий баланс за период: **${formatCurrency(totalIncome - totalExpense)}**\n\nДоходы: ${formatCurrency(totalIncome)}\nРасходы: ${formatCurrency(totalExpense)}\n\nНорма сбережений составляет ${Math.round(((totalIncome - totalExpense) / totalIncome) * 100)}% — отличный результат!`;
+    return `Текущий баланс: **${formatCurrency(balance)}**\n\nДоходы: ${formatCurrency(total_income)}\nРасходы: ${formatCurrency(total_expense)}\n\nНорма сбережений: ${savingsRate}%`;
   }
 
   if (lower.includes('расход') && (lower.includes('много') || lower.includes('сократ') || lower.includes('снизить'))) {
-    const top = [...categories.expense]
-      .map(cat => ({ ...cat, total: transactions.filter(t => t.type === 'expense' && t.category === cat.id).reduce((s, t) => s + t.amount, 0) }))
-      .sort((a, b) => b.total - a.total)[0];
-    return `Наибольшая статья расходов — **${top.name}** (${formatCurrency(top.total)}). Рекомендую:\n\n• Установить лимит на эту категорию\n• Сравнить с прошлым месяцем\n• Настроить напоминание о превышении бюджета`;
+    const expCats = cats.filter(c => c.type === 'expense');
+    const top = expCats.map(cat => ({
+      ...cat,
+      total: transactions.filter(t => t.category_id === cat.id).reduce((s, t) => s + t.amount, 0),
+    })).sort((a, b) => b.total - a.total)[0];
+    if (top && top.total > 0) {
+      return `Наибольшая статья расходов — **${top.name}** (${formatCurrency(top.total)}). Рекомендую:\n\n• Установить лимит на эту категорию\n• Сравнить с прошлым месяцем\n• Настроить напоминание о превышении бюджета`;
+    }
+    return `Расходы под контролем. Всего потрачено: **${formatCurrency(total_expense)}**`;
   }
 
   if (lower.includes('напомн') || lower.includes('платёж') || lower.includes('оплат')) {
     return `Создам напоминание. Укажите:\n\n1. Название платежа\n2. Сумму\n3. Дату\n\nНапример: *«Напомни об оплате интернета 15 числа на 650 рублей»*`;
   }
 
-  if (lower.includes('добав') || lower.includes('трат') || lower.includes('купил') || lower.includes('заплатил')) {
-    const cat = detectCategory(text);
-    const amountMatch = text.match(/\d[\d\s]*/);
+  if (lower.includes('добав') || lower.includes('трат') || lower.includes('купил') || lower.includes('заплатил') || lower.includes('получил')) {
+    const cat = detectCategory(text, cats);
+    const amountMatch = text.match(/(\d[\d\s]*)/);
     const amount = amountMatch ? amountMatch[0].replace(/\s/g, '') : null;
     if (cat && amount) {
-      return `Распознана транзакция:\n\n📁 Категория: **${cat}**\n💰 Сумма: **${formatCurrency(Number(amount))}**\n📅 Дата: сегодня\n\nЗаписать эту транзакцию?`;
+      return `Распознана транзакция:\n\n📁 Категория: **${cat.name}**\n💰 Сумма: **${formatCurrency(Number(amount))}**\n📅 Дата: сегодня\n\nПерейдите в раздел «${cat.type === 'income' ? 'Доходы' : 'Расходы'}» и добавьте запись вручную.`;
     }
     if (cat) {
-      return `Определил категорию: **${cat}**. Уточните сумму транзакции для записи.`;
+      return `Определил категорию: **${cat.name}**. Уточните сумму для добавления транзакции.`;
     }
-    return `Укажите подробности транзакции:\n\n• Сумму (например, *«5000 рублей»*)\n• Категорию или описание\n• Дату (если не сегодня)\n\nЯ автоматически определю категорию и запишу в систему.`;
+    return `Укажите подробности транзакции:\n\n• Сумму (*«5000 рублей»*)\n• Описание (*«обед в кафе»*)\n• Дату (если не сегодня)\n\nЯ определю категорию автоматически.`;
   }
 
   if (lower.includes('аналитик') || lower.includes('отчёт') || lower.includes('статистик')) {
-    const savings = Math.round(((totalIncome - totalExpense) / totalIncome) * 100);
-    return `Финансовая сводка за период:\n\n📈 Доходы: ${formatCurrency(totalIncome)}\n📉 Расходы: ${formatCurrency(totalExpense)}\n💼 Сбережения: ${savings}%\n\nПо сравнению с прошлым месяцем доходы выросли на 12%. Расходы в норме. Рекомендую увеличить инвестиционную долю.`;
+    return `Финансовая сводка:\n\n📈 Доходы: ${formatCurrency(total_income)}\n📉 Расходы: ${formatCurrency(total_expense)}\n💼 Баланс: ${formatCurrency(balance)}\n📊 Норма сбережений: ${savingsRate}%\n\nПодробная аналитика — в разделе «Аналитика».`;
   }
 
   if (lower.includes('привет') || lower.includes('здравствуй') || lower.includes('добрый')) {
-    return `Здравствуйте! Я ваш финансовый ассистент.\n\nМогу помочь:\n• Записать доходы и расходы\n• Проанализировать финансы\n• Распределить транзакции по категориям\n• Создать напоминания о платежах\n\nЧто вас интересует?`;
+    return `Здравствуйте! Я ваш финансовый ассистент.\n\nМогу помочь:\n• Проанализировать финансы\n• Распределить транзакции по категориям\n• Создать напоминания о платежах\n\nВаш текущий баланс: **${formatCurrency(balance)}**`;
   }
 
-  const cat = detectCategory(text);
+  const cat = detectCategory(text, cats);
   if (cat) {
-    return `Определил категорию: **${cat}**.\n\nЕсли хотите добавить транзакцию, укажите сумму и я её запишу автоматически.`;
+    const catTotal = transactions.filter(t => t.category_id === cat.id).reduce((s, t) => s + t.amount, 0);
+    return `Категория **${cat.name}**: всего ${formatCurrency(catTotal)}.\n\nЕсли хотите добавить транзакцию, перейдите в раздел «${cat.type === 'income' ? 'Доходы' : 'Расходы'}».`;
   }
 
   return `Понял вас. Могу помочь с:\n\n• Анализом баланса — напишите *«баланс»*\n• Добавлением транзакции — *«потратил 3000 на еду»*\n• Напоминаниями — *«напомни об оплате»*\n• Финансовым отчётом — *«аналитика»*`;
@@ -89,15 +108,6 @@ function formatMsg(text: string) {
   });
 }
 
-const initMessages: Message[] = [
-  {
-    id: 1,
-    role: 'bot',
-    text: 'Добро пожаловать! Я финансовый ассистент ФинансПро.\n\nМогу автоматически распределять транзакции по категориям, создавать напоминания о платежах и анализировать ваши финансы.\n\nКак я могу помочь?',
-    time: getTime(),
-  }
-];
-
 const suggestions = [
   'Покажи баланс',
   'Добавить расход 5000 на еду',
@@ -106,10 +116,29 @@ const suggestions = [
 ];
 
 export default function ChatBot() {
-  const [messages, setMessages] = useState<Message[]>(initMessages);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
+  const [cats, setCats] = useState<Category[]>([]);
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [totals, setTotals] = useState({ total_income: 0, total_expense: 0 });
   const endRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    Promise.all([api.categories.list(), api.transactions.list(), api.analytics.get()])
+      .then(([catRes, txRes, analRes]) => {
+        setCats(catRes.categories);
+        setTransactions(txRes.transactions);
+        setTotals(analRes.totals);
+        const balance = analRes.totals.total_income - analRes.totals.total_expense;
+        setMessages([{
+          id: 1,
+          role: 'bot',
+          text: `Добро пожаловать! Я финансовый ассистент ФинансПро.\n\nВаш текущий баланс: **${formatCurrency(balance)}**\n\nМогу распределять транзакции по категориям, создавать напоминания и анализировать финансы. Как помочь?`,
+          time: getTime(),
+        }]);
+      });
+  }, []);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -122,11 +151,11 @@ export default function ChatBot() {
     setInput('');
     setIsTyping(true);
     setTimeout(() => {
-      const resp = generateResponse(text);
-      const botMsg: Message = { id: Date.now() + 1, role: 'bot', text: resp, time: getTime() };
+      const respText = generateResponse(text, cats, transactions, totals);
+      const botMsg: Message = { id: Date.now() + 1, role: 'bot', text: respText, time: getTime() };
       setMessages(prev => [...prev, botMsg]);
       setIsTyping(false);
-    }, 900 + Math.random() * 600);
+    }, 800 + Math.random() * 500);
   }
 
   function handleKey(e: React.KeyboardEvent) {
@@ -137,7 +166,7 @@ export default function ChatBot() {
   }
 
   return (
-    <div className="p-6 h-full flex flex-col animate-fade-in" style={{ height: 'calc(100vh - 0px)' }}>
+    <div className="p-6 flex flex-col animate-fade-in" style={{ height: 'calc(100vh - 48px)' }}>
       <div className="flex items-center justify-between mb-5">
         <div>
           <h1 className="text-xl font-semibold text-foreground">Финансовый ассистент</h1>
@@ -149,7 +178,12 @@ export default function ChatBot() {
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto space-y-4 pr-1 min-h-0" style={{ maxHeight: 'calc(100vh - 280px)' }}>
+      <div className="flex-1 overflow-y-auto space-y-4 pr-1 min-h-0">
+        {messages.length === 0 && (
+          <div className="flex items-center justify-center h-32">
+            <Icon name="Loader2" size={16} className="animate-spin text-muted-foreground" />
+          </div>
+        )}
         {messages.map((msg) => (
           <div key={msg.id} className={`flex gap-3 ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-fade-in`}>
             {msg.role === 'bot' && (
@@ -184,7 +218,6 @@ export default function ChatBot() {
         <div ref={endRef} />
       </div>
 
-      {/* Suggestions */}
       <div className="flex gap-2 flex-wrap mt-4 mb-3">
         {suggestions.map(s => (
           <button
@@ -197,8 +230,7 @@ export default function ChatBot() {
         ))}
       </div>
 
-      {/* Input */}
-      <div className="flex gap-2 mt-1">
+      <div className="flex gap-2">
         <input
           type="text"
           placeholder="Напишите сообщение... (Enter для отправки)"

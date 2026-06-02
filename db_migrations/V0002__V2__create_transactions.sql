@@ -1,0 +1,1 @@
+CREATE TABLE t_p41757892_expense_management_b.transactions (id SERIAL PRIMARY KEY, type VARCHAR(10) NOT NULL, amount NUMERIC(15,2) NOT NULL, category_id INTEGER REFERENCES t_p41757892_expense_management_b.categories(id), description TEXT NOT NULL DEFAULT '', date DATE NOT NULL DEFAULT CURRENT_DATE, created_at TIMESTAMPTZ DEFAULT NOW())

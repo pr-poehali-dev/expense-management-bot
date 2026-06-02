@@ -1,18 +1,70 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Icon from '@/components/ui/icon';
-import { transactions, categories, formatCurrency, formatDate } from '@/data/mockData';
-
-const incomeList = transactions.filter(t => t.type === 'income');
-
-function getCategoryName(id: string) {
-  return categories.income.find(c => c.id === id)?.name ?? id;
-}
+import { api, Transaction, Category } from '@/lib/api';
+import { formatCurrency, formatDate } from '@/data/mockData';
 
 export default function Income() {
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ amount: '', category: 'salary', description: '', date: '' });
+  const [form, setForm] = useState({ amount: '', category_id: '', description: '', date: '' });
+  const [search, setSearch] = useState('');
 
-  const total = incomeList.reduce((s, t) => s + t.amount, 0);
+  useEffect(() => {
+    Promise.all([api.transactions.list('income'), api.categories.list('income')])
+      .then(([txRes, catRes]) => {
+        setTransactions(txRes.transactions);
+        setCategories(catRes.categories);
+        if (catRes.categories.length > 0) {
+          setForm(f => ({ ...f, category_id: String(catRes.categories[0].id) }));
+        }
+      })
+      .finally(() => setLoading(false));
+  }, []);
+
+  const total = transactions.reduce((s, t) => s + t.amount, 0);
+  const filtered = transactions.filter(t =>
+    t.description.toLowerCase().includes(search.toLowerCase()) ||
+    (t.category_name ?? '').toLowerCase().includes(search.toLowerCase())
+  );
+
+  async function handleSave() {
+    if (!form.amount || !form.description) return;
+    setSaving(true);
+    try {
+      const created = await api.transactions.create({
+        type: 'income',
+        amount: parseFloat(form.amount),
+        category_id: form.category_id ? parseInt(form.category_id) : null,
+        description: form.description,
+        date: form.date || new Date().toISOString().split('T')[0],
+      });
+      const cat = categories.find(c => c.id === created.category_id);
+      setTransactions(prev => [{
+        ...created,
+        category_name: cat?.name ?? null,
+        category_color: cat?.color ?? null,
+        category_icon: cat?.icon ?? null,
+      }, ...prev]);
+      setForm({ amount: '', category_id: categories[0] ? String(categories[0].id) : '', description: '', date: '' });
+      setShowForm(false);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="p-6 flex items-center justify-center h-64">
+        <div className="flex items-center gap-3 text-muted-foreground text-sm">
+          <Icon name="Loader2" size={16} className="animate-spin" />
+          Загрузка...
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="p-6 space-y-6 animate-fade-in">
@@ -30,11 +82,12 @@ export default function Income() {
       {/* Summary */}
       <div className="grid grid-cols-4 gap-3">
         <div className="stat-card col-span-1">
-          <div className="section-title mb-2">Итого за период</div>
+          <div className="section-title mb-2">Итого</div>
           <div className="text-xl font-mono-ibm font-semibold text-income">{formatCurrency(total)}</div>
+          <div className="text-xs text-muted-foreground mt-1">{transactions.length} транзакций</div>
         </div>
-        {categories.income.slice(0, 3).map(cat => {
-          const catTotal = incomeList.filter(t => t.category === cat.id).reduce((s, t) => s + t.amount, 0);
+        {categories.slice(0, 3).map(cat => {
+          const catTotal = transactions.filter(t => t.category_id === cat.id).reduce((s, t) => s + t.amount, 0);
           return (
             <div key={cat.id} className="stat-card">
               <div className="section-title mb-2">{cat.name}</div>
@@ -61,14 +114,8 @@ export default function Income() {
             </div>
             <div>
               <label className="block text-xs text-muted-foreground mb-1.5">Категория</label>
-              <select
-                className="fin-input"
-                value={form.category}
-                onChange={e => setForm({ ...form, category: e.target.value })}
-              >
-                {categories.income.map(c => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
+              <select className="fin-input" value={form.category_id} onChange={e => setForm({ ...form, category_id: e.target.value })}>
+                {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
             </div>
             <div>
@@ -83,19 +130,14 @@ export default function Income() {
             </div>
             <div>
               <label className="block text-xs text-muted-foreground mb-1.5">Дата</label>
-              <input
-                type="date"
-                className="fin-input"
-                value={form.date}
-                onChange={e => setForm({ ...form, date: e.target.value })}
-              />
+              <input type="date" className="fin-input" value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} />
             </div>
           </div>
           <div className="flex justify-end gap-2 mt-4">
             <button onClick={() => setShowForm(false)} className="fin-btn-secondary">Отмена</button>
-            <button className="fin-btn-primary flex items-center gap-2">
-              <Icon name="Check" size={14} />
-              Сохранить
+            <button onClick={handleSave} disabled={saving || !form.amount || !form.description} className="fin-btn-primary flex items-center gap-2">
+              {saving ? <Icon name="Loader2" size={14} className="animate-spin" /> : <Icon name="Check" size={14} />}
+              {saving ? 'Сохранение...' : 'Сохранить'}
             </button>
           </div>
         </div>
@@ -105,11 +147,15 @@ export default function Income() {
       <div className="stat-card">
         <div className="flex items-center justify-between mb-4">
           <span className="text-sm font-medium text-foreground">Все поступления</span>
-          <div className="flex items-center gap-2">
-            <div className="relative">
-              <Icon name="Search" size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-              <input type="text" placeholder="Поиск..." className="fin-input pl-8 w-48 h-8 text-xs" />
-            </div>
+          <div className="relative">
+            <Icon name="Search" size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <input
+              type="text"
+              placeholder="Поиск..."
+              className="fin-input pl-8 w-48 h-8 text-xs"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+            />
           </div>
         </div>
         <div className="overflow-x-auto">
@@ -120,23 +166,20 @@ export default function Income() {
                 <th className="text-left py-2 px-2 text-xs text-muted-foreground font-medium">Описание</th>
                 <th className="text-left py-2 px-2 text-xs text-muted-foreground font-medium">Категория</th>
                 <th className="text-right py-2 px-2 text-xs text-muted-foreground font-medium">Сумма</th>
-                <th className="w-8" />
               </tr>
             </thead>
             <tbody>
-              {incomeList.map((t) => (
+              {filtered.length === 0 && (
+                <tr><td colSpan={4} className="py-8 text-center text-xs text-muted-foreground">Транзакции не найдены</td></tr>
+              )}
+              {filtered.map((t) => (
                 <tr key={t.id} className="border-b border-border/40 hover:bg-secondary/30 transition-colors">
                   <td className="py-3 px-2 text-xs text-muted-foreground font-mono-ibm">{formatDate(t.date)}</td>
                   <td className="py-3 px-2 text-sm text-foreground">{t.description}</td>
                   <td className="py-3 px-2">
-                    <span className="badge-income">{getCategoryName(t.category)}</span>
+                    <span className="badge-income">{t.category_name ?? '—'}</span>
                   </td>
                   <td className="py-3 px-2 text-right font-mono-ibm text-sm text-income font-medium">+{formatCurrency(t.amount)}</td>
-                  <td className="py-3 px-2">
-                    <button className="w-6 h-6 flex items-center justify-center rounded hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors">
-                      <Icon name="MoreHorizontal" size={13} />
-                    </button>
-                  </td>
                 </tr>
               ))}
             </tbody>

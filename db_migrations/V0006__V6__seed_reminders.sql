@@ -1,0 +1,1 @@
+INSERT INTO t_p41757892_expense_management_b.reminders (title, amount, due_date, category_id, status) VALUES ('Оплата аренды', 42000, '2026-06-01', 6, 'upcoming'), ('Налог на доходы', 24050, '2026-06-15', 13, 'upcoming'), ('Страховка автомобиля', 18500, '2026-06-20', 8, 'upcoming'), ('Подписка на сервисы', 3200, '2026-05-31', 13, 'overdue')

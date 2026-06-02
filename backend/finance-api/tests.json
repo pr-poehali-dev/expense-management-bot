@@ -1,0 +1,44 @@
+{
+  "tests": [
+    {
+      "name": "GET transactions",
+      "method": "GET",
+      "path": "/?resource=transactions",
+      "expectedStatus": 200,
+      "expectedBody": {"transactions": [], "total": 0},
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "GET income transactions",
+      "method": "GET",
+      "path": "/?resource=transactions&type=income",
+      "expectedStatus": 200,
+      "expectedBody": {"transactions": [], "total": 0},
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "GET categories",
+      "method": "GET",
+      "path": "/?resource=categories",
+      "expectedStatus": 200,
+      "expectedBody": {"categories": []},
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "GET analytics",
+      "method": "GET",
+      "path": "/?resource=analytics",
+      "expectedStatus": 200,
+      "expectedBody": {"monthly": [], "by_category": [], "totals": {}},
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "GET reminders",
+      "method": "GET",
+      "path": "/?resource=reminders",
+      "expectedStatus": 200,
+      "expectedBody": {"reminders": []},
+      "bodyMatcher": "partial"
+    }
+  ]
+}

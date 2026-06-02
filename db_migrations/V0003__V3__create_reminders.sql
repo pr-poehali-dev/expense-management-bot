@@ -1,0 +1,1 @@
+CREATE TABLE t_p41757892_expense_management_b.reminders (id SERIAL PRIMARY KEY, title VARCHAR(200) NOT NULL, amount NUMERIC(15,2) NOT NULL, due_date DATE NOT NULL, category_id INTEGER REFERENCES t_p41757892_expense_management_b.categories(id), status VARCHAR(20) NOT NULL DEFAULT 'upcoming', created_at TIMESTAMPTZ DEFAULT NOW())
