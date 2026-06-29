@@ -117,4 +117,12 @@ export const api = {
     update: (id: number, data: { last_name: string; first_name: string; middle_name: string; monthly_cost: number; opened_at: string }) =>
       request<Client>("PUT", { resource: "clients", id: String(id) }, data),
   },
+  whitelist: {
+    list: () =>
+      request<{ whitelist: { id: number; phone: string; name: string; user_id: number | null; is_active: boolean; created_at: string }[]; total: number }>("GET", { resource: "whitelist" }),
+    create: (data: { phone: string; name: string }) =>
+      request<{ id: number; phone: string; name: string; user_id: number | null; is_active: boolean; created_at: string }>("POST", {}, { resource: "whitelist", ...data }),
+    update: (id: number, data: { is_active?: boolean; name?: string; phone?: string }) =>
+      request<{ id: number; phone: string; name: string; user_id: number | null; is_active: boolean; created_at: string }>("PUT", { resource: "whitelist", id: String(id) }, data),
+  },
 };

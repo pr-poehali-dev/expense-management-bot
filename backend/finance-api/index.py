@@ -15,7 +15,7 @@ from psycopg2.extras import RealDictCursor
 SCHEMA = "t_p41757892_expense_management_b"
 CORS = {
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, POST, PUT, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
 }
 
@@ -267,6 +267,82 @@ def handle_clients(method, params, body, cur, conn):
     return resp(405, {"error": "Method not allowed"})
 
 
+def handle_whitelist(method, params, body, cur, conn):
+    def normalize(phone):
+        import re
+        digits = re.sub(r'\D', '', phone)
+        if digits.startswith('8') and len(digits) == 11:
+            digits = '7' + digits[1:]
+        return '+' + digits if not digits.startswith('+') else digits
+
+    if method == "GET":
+        cur.execute(f"""
+            SELECT id, phone, name, user_id, is_active, created_at::text
+            FROM {SCHEMA}.bot_whitelist
+            ORDER BY created_at DESC
+        """)
+        rows = [dict(r) for r in cur.fetchall()]
+        return resp(200, {"whitelist": rows, "total": len(rows)})
+
+    if method == "POST":
+        phone = normalize(body.get("phone", "").strip())
+        name = body.get("name", "").strip()
+        if len(phone) < 7:
+            return resp(400, {"error": "Некорректный номер телефона"})
+        cur.execute(f"""
+            INSERT INTO {SCHEMA}.bot_whitelist (phone, name)
+            VALUES (%s, %s)
+            ON CONFLICT (phone) DO UPDATE SET name=EXCLUDED.name, is_active=TRUE
+            RETURNING id, phone, name, user_id, is_active, created_at::text
+        """, (phone, name))
+        conn.commit()
+        return resp(201, dict(cur.fetchone()))
+
+    if method == "PUT":
+        wl_id = params.get("id")
+        if not wl_id:
+            return resp(400, {"error": "Не указан id"})
+        is_active = body.get("is_active")
+        name = body.get("name", "").strip()
+        phone_raw = body.get("phone", "").strip()
+        phone = normalize(phone_raw) if phone_raw else None
+        sets = []
+        if is_active is not None:
+            sets.append(f"is_active={'TRUE' if is_active else 'FALSE'}")
+        if name:
+            sets.append("name=%s")
+        if phone:
+            sets.append("phone=%s")
+        if not sets:
+            return resp(400, {"error": "Нет данных для обновления"})
+        args = []
+        if name:
+            args.append(name)
+        if phone:
+            args.append(phone)
+        cur.execute(f"""
+            UPDATE {SCHEMA}.bot_whitelist
+            SET {', '.join(sets)}
+            WHERE id={int(wl_id)}
+            RETURNING id, phone, name, user_id, is_active, created_at::text
+        """, args if args else None)
+        conn.commit()
+        row = cur.fetchone()
+        if not row:
+            return resp(404, {"error": "Не найдено"})
+        return resp(200, dict(row))
+
+    if method == "DELETE":
+        wl_id = params.get("id")
+        if not wl_id:
+            return resp(400, {"error": "Не указан id"})
+        cur.execute(f"UPDATE {SCHEMA}.bot_whitelist SET is_active=FALSE WHERE id={int(wl_id)}")
+        conn.commit()
+        return resp(200, {"ok": True})
+
+    return resp(405, {"error": "Method not allowed"})
+
+
 def handler(event: dict, context) -> dict:
     if event.get("httpMethod") == "OPTIONS":
         return {"statusCode": 200, "headers": CORS, "body": ""}
@@ -293,6 +369,9 @@ def handler(event: dict, context) -> dict:
             return handle_reminders(method, params, body, cur, conn)
         if resource == "clients":
             return handle_clients(method, params, body, cur, conn)
+        if resource == "whitelist":
+            return handle_whitelist(method, params, body, cur, conn)
+        
         return resp(400, {"error": f"Неизвестный ресурс: {resource}"})
     finally:
         cur.close()

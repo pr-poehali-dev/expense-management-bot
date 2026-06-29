@@ -32,6 +32,60 @@ def get_conn():
     return psycopg2.connect(os.environ["DATABASE_URL"])
 
 
+def normalize_phone(phone: str) -> str:
+    digits = re.sub(r'\D', '', phone)
+    if digits.startswith('8') and len(digits) == 11:
+        digits = '7' + digits[1:]
+    return '+' + digits
+
+
+def is_allowed(user_id: int, phone: str, cur) -> bool:
+    """Проверяем доступ: если whitelist пуст — доступ открыт всем, иначе — только разрешённым."""
+    cur.execute(f"SELECT COUNT(*) AS cnt FROM {SCHEMA}.bot_whitelist WHERE is_active = TRUE")
+    total = cur.fetchone()["cnt"]
+    if total == 0:
+        return True  # whitelist пуст — режим открытого доступа
+
+    # Проверяем по user_id (если уже привязан)
+    if user_id:
+        cur.execute(f"SELECT id FROM {SCHEMA}.bot_whitelist WHERE user_id = {int(user_id)} AND is_active = TRUE")
+        if cur.fetchone():
+            return True
+
+    # Проверяем по номеру телефона
+    if phone:
+        norm = normalize_phone(phone)
+        cur.execute(f"SELECT id FROM {SCHEMA}.bot_whitelist WHERE phone = %s AND is_active = TRUE", (norm,))
+        row = cur.fetchone()
+        if row:
+            # Привязываем user_id к этому номеру
+            if user_id:
+                cur.execute(
+                    f"UPDATE {SCHEMA}.bot_whitelist SET user_id = {int(user_id)} WHERE phone = %s",
+                    (norm,)
+                )
+            return True
+
+    return False
+
+
+def get_user_phone(user_id: int) -> str:
+    """Запрашиваем номер телефона пользователя через Max API."""
+    try:
+        token = get_token()
+        r = requests.get(
+            f"{MAX_API}/users/{user_id}",
+            headers={"Authorization": token},
+            timeout=5,
+        )
+        if r.ok:
+            data = r.json()
+            return data.get("phone", "") or ""
+    except Exception:
+        pass
+    return ""
+
+
 def send_message(chat_id, text):
     """Отправляет сообщение пользователю через Max Bot API."""
     token = get_token()
@@ -265,6 +319,17 @@ def handler(event: dict, context) -> dict:
             conn = get_conn()
             cur = conn.cursor(cursor_factory=RealDictCursor)
             try:
+                user_id_int = sender.get("user_id") or chat_id
+                phone = get_user_phone(user_id_int)
+                if not is_allowed(user_id_int, phone, cur):
+                    conn.commit()
+                    send_message(chat_id,
+                        "🔒 Доступ закрыт.\n\n"
+                        "Этот бот доступен только авторизованным пользователям. "
+                        "Обратитесь к администратору системы."
+                    )
+                    return {"statusCode": 200, "headers": CORS, "body": "ok"}
+                conn.commit()
                 reply = process_message(text, chat_id, cur)
             finally:
                 cur.close()
