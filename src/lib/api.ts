@@ -25,6 +25,10 @@ export interface Transaction {
   category_name: string | null;
   category_color: string | null;
   category_icon: string | null;
+  client_id: number | null;
+  client_last_name: string | null;
+  client_first_name: string | null;
+  client_middle_name: string | null;
 }
 
 export interface Category {
@@ -53,6 +57,14 @@ export interface Client {
   monthly_cost: number;
   opened_at: string;
   created_at: string;
+  tx_count?: number;
+  total_income?: number;
+  total_expense?: number;
+  transactions?: {
+    id: number; type: string; amount: number; description: string;
+    date: string; category_name: string | null; category_color: string | null;
+  }[];
+  stats?: { total_income: number; total_expense: number };
 }
 
 export interface AnalyticsData {
@@ -68,8 +80,10 @@ export const api = {
         resource: "transactions",
         ...(type ? { type } : {}),
       }),
-    create: (data: { type: string; amount: number; category_id?: number | null; description: string; date: string }) =>
+    create: (data: { type: string; amount: number; category_id?: number | null; client_id?: number | null; description: string; date: string }) =>
       request<Transaction>("POST", {}, { resource: "transaction", ...data }),
+    listByClient: (client_id: number) =>
+      request<{ transactions: Transaction[]; total: number }>("GET", { resource: "transactions", client_id: String(client_id) }),
   },
   categories: {
     list: (type?: "income" | "expense") =>
@@ -96,6 +110,8 @@ export const api = {
         resource: "clients",
         ...(search ? { search } : {}),
       }),
+    get: (id: number) =>
+      request<Client>("GET", { resource: "clients", id: String(id) }),
     create: (data: { last_name: string; first_name: string; middle_name: string; monthly_cost: number; opened_at: string }) =>
       request<Client>("POST", {}, { resource: "clients", ...data }),
     update: (id: number, data: { last_name: string; first_name: string; middle_name: string; monthly_cost: number; opened_at: string }) =>

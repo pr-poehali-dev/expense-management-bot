@@ -3,6 +3,116 @@ import Icon from '@/components/ui/icon';
 import { api, Client } from '@/lib/api';
 import { formatCurrency, formatDate } from '@/data/mockData';
 
+// --- Client detail drawer ---
+function ClientDrawer({ client, onClose, onEdit }: {
+  client: Client;
+  onClose: () => void;
+  onEdit: (c: Client) => void;
+}) {
+  const [detail, setDetail] = useState<Client | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    api.clients.get(client.id).then(setDetail).finally(() => setLoading(false));
+  }, [client.id]);
+
+  const income = detail?.stats?.total_income ?? 0;
+  const expense = detail?.stats?.total_expense ?? 0;
+  const fullName = [client.last_name, client.first_name, client.middle_name].filter(Boolean).join(' ');
+
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end" onClick={onClose}>
+      <div
+        className="w-[480px] h-full bg-card border-l border-border flex flex-col shadow-2xl animate-slide-in-right"
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="px-6 py-5 border-b border-border flex items-start justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-sm font-semibold text-primary">
+              {client.last_name[0]}{client.first_name[0]}
+            </div>
+            <div>
+              <div className="text-sm font-semibold text-foreground">{fullName}</div>
+              <div className="text-xs text-muted-foreground mt-0.5">
+                Клиент с {formatDate(client.opened_at)}
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => onEdit(client)}
+              className="fin-btn-secondary text-xs flex items-center gap-1.5 h-7 px-2.5"
+            >
+              <Icon name="Pencil" size={12} />
+              Изменить
+            </button>
+            <button onClick={onClose} className="w-7 h-7 flex items-center justify-center rounded hover:bg-secondary text-muted-foreground">
+              <Icon name="X" size={15} />
+            </button>
+          </div>
+        </div>
+
+        {/* KPI */}
+        <div className="grid grid-cols-3 gap-3 px-6 py-4 border-b border-border">
+          <div>
+            <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Стоимость/мес</div>
+            <div className="text-base font-mono-ibm font-semibold text-income">{formatCurrency(client.monthly_cost)}</div>
+          </div>
+          <div>
+            <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Доходы</div>
+            <div className="text-base font-mono-ibm font-semibold text-income">{formatCurrency(income)}</div>
+          </div>
+          <div>
+            <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Расходы</div>
+            <div className="text-base font-mono-ibm font-semibold text-expense">{formatCurrency(expense)}</div>
+          </div>
+        </div>
+
+        {/* Transactions */}
+        <div className="flex-1 overflow-y-auto px-6 py-4">
+          <div className="text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-3">
+            Транзакции клиента
+          </div>
+          {loading && (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground py-8 justify-center">
+              <Icon name="Loader2" size={14} className="animate-spin" /> Загрузка...
+            </div>
+          )}
+          {!loading && (!detail?.transactions || detail.transactions.length === 0) && (
+            <div className="text-xs text-muted-foreground py-8 text-center">
+              Транзакций по этому клиенту ещё нет.
+              <br />Добавьте доход или расход и выберите клиента.
+            </div>
+          )}
+          {!loading && detail?.transactions?.map(t => (
+            <div key={t.id} className="flex items-center justify-between py-2.5 border-b border-border/40 last:border-0">
+              <div className="flex items-center gap-2.5">
+                <div className={`w-6 h-6 rounded flex items-center justify-center ${t.type === 'income' ? 'bg-emerald-500/10' : 'bg-red-500/10'}`}>
+                  <Icon
+                    name={t.type === 'income' ? 'ArrowDownLeft' : 'ArrowUpRight'}
+                    size={11}
+                    className={t.type === 'income' ? 'text-emerald-400' : 'text-red-400'}
+                  />
+                </div>
+                <div>
+                  <div className="text-xs text-foreground">{t.description}</div>
+                  <div className="text-[10px] text-muted-foreground">
+                    {t.category_name ?? '—'} · {formatDate(t.date)}
+                  </div>
+                </div>
+              </div>
+              <div className={`font-mono-ibm text-xs font-medium ${t.type === 'income' ? 'text-income' : 'text-expense'}`}>
+                {t.type === 'income' ? '+' : '−'}{formatCurrency(t.amount)}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const emptyForm = {
   last_name: '',
   first_name: '',
@@ -21,6 +131,7 @@ export default function Clients() {
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId] = useState<number | null>(null);
   const [form, setForm] = useState(emptyForm);
+  const [selectedClient, setSelectedClient] = useState<Client | null>(null);
 
   function loadClients(q = '') {
     setLoading(true);
@@ -41,6 +152,7 @@ export default function Clients() {
   }
 
   function openEdit(c: Client) {
+    setSelectedClient(null);
     setEditId(c.id);
     setForm({
       last_name: c.last_name,
@@ -278,7 +390,11 @@ export default function Clients() {
                   </tr>
                 )}
                 {clients.map((c) => (
-                  <tr key={c.id} className="border-b border-border/40 hover:bg-secondary/30 transition-colors group">
+                  <tr
+                    key={c.id}
+                    className="border-b border-border/40 hover:bg-secondary/30 transition-colors group cursor-pointer"
+                    onClick={() => setSelectedClient(c)}
+                  >
                     <td className="py-3 px-2">
                       <div className="flex items-center gap-2.5">
                         <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-xs font-semibold text-primary flex-shrink-0">
@@ -298,12 +414,18 @@ export default function Clients() {
                       {formatDate(c.opened_at)}
                     </td>
                     <td className="py-3 px-2">
-                      <button
-                        onClick={() => openEdit(c)}
-                        className="w-6 h-6 flex items-center justify-center rounded hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors opacity-0 group-hover:opacity-100"
-                      >
-                        <Icon name="Pencil" size={12} />
-                      </button>
+                      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        {c.tx_count !== undefined && c.tx_count > 0 && (
+                          <span className="text-[10px] text-muted-foreground font-mono-ibm mr-1">{c.tx_count} тр.</span>
+                        )}
+                        <button
+                          onClick={e => { e.stopPropagation(); openEdit(c); }}
+                          className="w-6 h-6 flex items-center justify-center rounded hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors"
+                        >
+                          <Icon name="Pencil" size={12} />
+                        </button>
+                        <Icon name="ChevronRight" size={13} className="text-muted-foreground" />
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -321,6 +443,14 @@ export default function Clients() {
           </div>
         )}
       </div>
+
+      {selectedClient && (
+        <ClientDrawer
+          client={selectedClient}
+          onClose={() => setSelectedClient(null)}
+          onEdit={(c) => { openEdit(c); }}
+        />
+      )}
     </div>
   );
 }

@@ -31,15 +31,25 @@ def resp(status, body):
 def handle_transactions(method, params, body, cur, conn):
     if method == "GET":
         tx_type = params.get("type")
+        client_id = params.get("client_id")
         limit = int(params.get("limit", 200))
-        where = f"WHERE t.type = '{tx_type}'" if tx_type in ("income", "expense") else ""
+        conditions = []
+        if tx_type in ("income", "expense"):
+            conditions.append(f"t.type = '{tx_type}'")
+        if client_id:
+            conditions.append(f"t.client_id = {int(client_id)}")
+        where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
         cur.execute(f"""
             SELECT t.id, t.type, t.amount::float, t.description, t.date::text,
                    t.created_at::text,
                    c.id AS category_id, c.name AS category_name,
-                   c.color AS category_color, c.icon AS category_icon
+                   c.color AS category_color, c.icon AS category_icon,
+                   t.client_id,
+                   cl.last_name AS client_last_name, cl.first_name AS client_first_name,
+                   cl.middle_name AS client_middle_name
             FROM {SCHEMA}.transactions t
             LEFT JOIN {SCHEMA}.categories c ON c.id = t.category_id
+            LEFT JOIN {SCHEMA}.clients cl ON cl.id = t.client_id
             {where}
             ORDER BY t.date DESC, t.created_at DESC
             LIMIT {limit}
@@ -53,16 +63,18 @@ def handle_transactions(method, params, body, cur, conn):
         tx_type = body.get("type")
         amount = float(body.get("amount", 0))
         category_id = body.get("category_id")
+        client_id = body.get("client_id")
         description = body.get("description", "").strip()
         date = body.get("date") or None
         if tx_type not in ("income", "expense") or amount <= 0:
             return resp(400, {"error": "Неверные данные"})
         cat_sql = str(int(category_id)) if category_id else "NULL"
+        cli_sql = str(int(client_id)) if client_id else "NULL"
         date_sql = f"'{date}'" if date else "CURRENT_DATE"
         cur.execute(f"""
-            INSERT INTO {SCHEMA}.transactions (type, amount, category_id, description, date)
-            VALUES ('{tx_type}', {amount}, {cat_sql}, %s, {date_sql})
-            RETURNING id, type, amount::float, description, date::text, created_at::text
+            INSERT INTO {SCHEMA}.transactions (type, amount, category_id, client_id, description, date)
+            VALUES ('{tx_type}', {amount}, {cat_sql}, {cli_sql}, %s, {date_sql})
+            RETURNING id, type, amount::float, description, date::text, created_at::text, client_id
         """, (description,))
         conn.commit()
         return resp(201, dict(cur.fetchone()))
@@ -165,15 +177,49 @@ def handle_reminders(method, params, body, cur, conn):
 def handle_clients(method, params, body, cur, conn):
     if method == "GET":
         search = params.get("search", "").strip()
+        client_id = params.get("id")
+        # Single client with transactions
+        if client_id:
+            cur.execute(f"""
+                SELECT id, last_name, first_name, middle_name,
+                       monthly_cost::float, opened_at::text, created_at::text
+                FROM {SCHEMA}.clients WHERE id = {int(client_id)}
+            """)
+            row = cur.fetchone()
+            if not row:
+                return resp(404, {"error": "Клиент не найден"})
+            client = dict(row)
+            cur.execute(f"""
+                SELECT t.id, t.type, t.amount::float, t.description, t.date::text,
+                       c.name AS category_name, c.color AS category_color
+                FROM {SCHEMA}.transactions t
+                LEFT JOIN {SCHEMA}.categories c ON c.id = t.category_id
+                WHERE t.client_id = {int(client_id)}
+                ORDER BY t.date DESC LIMIT 50
+            """)
+            client["transactions"] = [dict(r) for r in cur.fetchall()]
+            cur.execute(f"""
+                SELECT COALESCE(SUM(CASE WHEN type='income' THEN amount ELSE 0 END),0)::float AS total_income,
+                       COALESCE(SUM(CASE WHEN type='expense' THEN amount ELSE 0 END),0)::float AS total_expense
+                FROM {SCHEMA}.transactions WHERE client_id = {int(client_id)}
+            """)
+            client["stats"] = dict(cur.fetchone())
+            return resp(200, client)
+        # List
         where = ""
         if search:
             where = f"WHERE last_name ILIKE '%{search}%' OR first_name ILIKE '%{search}%' OR middle_name ILIKE '%{search}%'"
         cur.execute(f"""
-            SELECT id, last_name, first_name, middle_name,
-                   monthly_cost::float, opened_at::text, created_at::text
-            FROM {SCHEMA}.clients
+            SELECT cl.id, cl.last_name, cl.first_name, cl.middle_name,
+                   cl.monthly_cost::float, cl.opened_at::text, cl.created_at::text,
+                   COUNT(t.id) AS tx_count,
+                   COALESCE(SUM(CASE WHEN t.type='income' THEN t.amount ELSE 0 END),0)::float AS total_income,
+                   COALESCE(SUM(CASE WHEN t.type='expense' THEN t.amount ELSE 0 END),0)::float AS total_expense
+            FROM {SCHEMA}.clients cl
+            LEFT JOIN {SCHEMA}.transactions t ON t.client_id = cl.id
             {where}
-            ORDER BY last_name, first_name
+            GROUP BY cl.id, cl.last_name, cl.first_name, cl.middle_name, cl.monthly_cost, cl.opened_at, cl.created_at
+            ORDER BY cl.last_name, cl.first_name
         """)
         rows = [dict(r) for r in cur.fetchall()]
         cur.execute(f"SELECT COUNT(*) AS cnt, COALESCE(SUM(monthly_cost),0)::float AS total FROM {SCHEMA}.clients")

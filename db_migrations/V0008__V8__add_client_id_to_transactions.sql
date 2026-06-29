@@ -1,0 +1,1 @@
+ALTER TABLE t_p41757892_expense_management_b.transactions ADD COLUMN client_id INTEGER REFERENCES t_p41757892_expense_management_b.clients(id)
