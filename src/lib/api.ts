@@ -45,6 +45,16 @@ export interface Reminder {
   category_color: string | null;
 }
 
+export interface Client {
+  id: number;
+  last_name: string;
+  first_name: string;
+  middle_name: string;
+  monthly_cost: number;
+  opened_at: string;
+  created_at: string;
+}
+
 export interface AnalyticsData {
   monthly: { month: string; month_key: string; income: number; expense: number }[];
   by_category: { id: number; name: string; color: string; icon: string; type: string; total: number; tx_count: number }[];
@@ -79,5 +89,16 @@ export const api = {
       request<Reminder>("POST", {}, { resource: "reminder", ...data }),
     updateStatus: (id: number, status: string) =>
       request<{ ok: boolean }>("PUT", { resource: "reminders", id: String(id) }, { status }),
+  },
+  clients: {
+    list: (search?: string) =>
+      request<{ clients: Client[]; total: number; total_monthly: number }>("GET", {
+        resource: "clients",
+        ...(search ? { search } : {}),
+      }),
+    create: (data: { last_name: string; first_name: string; middle_name: string; monthly_cost: number; opened_at: string }) =>
+      request<Client>("POST", {}, { resource: "clients", ...data }),
+    update: (id: number, data: { last_name: string; first_name: string; middle_name: string; monthly_cost: number; opened_at: string }) =>
+      request<Client>("PUT", { resource: "clients", id: String(id) }, data),
   },
 };

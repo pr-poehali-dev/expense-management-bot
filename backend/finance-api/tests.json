@@ -39,6 +39,14 @@
       "expectedStatus": 200,
       "expectedBody": {"reminders": []},
       "bodyMatcher": "partial"
+    },
+    {
+      "name": "GET clients",
+      "method": "GET",
+      "path": "/?resource=clients",
+      "expectedStatus": 200,
+      "expectedBody": {"clients": [], "total": 0, "total_monthly": 0},
+      "bodyMatcher": "partial"
     }
   ]
 }

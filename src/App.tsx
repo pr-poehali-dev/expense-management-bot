@@ -8,8 +8,9 @@ import Categories from '@/pages/Categories';
 import Analytics from '@/pages/Analytics';
 import ChatBot from '@/pages/ChatBot';
 import Settings from '@/pages/Settings';
+import Clients from '@/pages/Clients';
 
-type Page = 'dashboard' | 'income' | 'expenses' | 'categories' | 'analytics' | 'chat' | 'settings';
+type Page = 'dashboard' | 'income' | 'expenses' | 'categories' | 'analytics' | 'clients' | 'chat' | 'settings';
 
 const pageTitles: Record<Page, string> = {
   dashboard: 'Обзор',
@@ -17,6 +18,7 @@ const pageTitles: Record<Page, string> = {
   expenses: 'Расходы',
   categories: 'Категории',
   analytics: 'Аналитика',
+  clients: 'Клиенты',
   chat: 'Финансовый ассистент',
   settings: 'Настройки',
 };
@@ -31,6 +33,7 @@ export default function App() {
       case 'expenses': return <Expenses />;
       case 'categories': return <Categories />;
       case 'analytics': return <Analytics />;
+      case 'clients': return <Clients />;
       case 'chat': return <ChatBot />;
       case 'settings': return <Settings />;
       default: return <Dashboard />;

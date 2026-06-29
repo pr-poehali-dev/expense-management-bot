@@ -5,6 +5,7 @@
   categories    — GET (list), POST (create)
   analytics     — GET (monthly + by_category + totals)
   reminders     — GET (list), POST (create), PUT (update status, ?id=N)
+  clients       — GET (list), POST (create), PUT (update, ?id=N)
 """
 import json
 import os
@@ -161,6 +162,65 @@ def handle_reminders(method, params, body, cur, conn):
     return resp(405, {"error": "Method not allowed"})
 
 
+def handle_clients(method, params, body, cur, conn):
+    if method == "GET":
+        search = params.get("search", "").strip()
+        where = ""
+        if search:
+            where = f"WHERE last_name ILIKE '%{search}%' OR first_name ILIKE '%{search}%' OR middle_name ILIKE '%{search}%'"
+        cur.execute(f"""
+            SELECT id, last_name, first_name, middle_name,
+                   monthly_cost::float, opened_at::text, created_at::text
+            FROM {SCHEMA}.clients
+            {where}
+            ORDER BY last_name, first_name
+        """)
+        rows = [dict(r) for r in cur.fetchall()]
+        cur.execute(f"SELECT COUNT(*) AS cnt, COALESCE(SUM(monthly_cost),0)::float AS total FROM {SCHEMA}.clients")
+        summary = dict(cur.fetchone())
+        return resp(200, {"clients": rows, "total": summary["cnt"], "total_monthly": summary["total"]})
+
+    if method == "POST":
+        last_name = body.get("last_name", "").strip()
+        first_name = body.get("first_name", "").strip()
+        middle_name = body.get("middle_name", "").strip()
+        monthly_cost = float(body.get("monthly_cost", 0))
+        opened_at = body.get("opened_at") or None
+        if not last_name or not first_name:
+            return resp(400, {"error": "Фамилия и имя обязательны"})
+        date_sql = f"'{opened_at}'" if opened_at else "CURRENT_DATE"
+        cur.execute(f"""
+            INSERT INTO {SCHEMA}.clients (last_name, first_name, middle_name, monthly_cost, opened_at)
+            VALUES (%s, %s, %s, {monthly_cost}, {date_sql})
+            RETURNING id, last_name, first_name, middle_name, monthly_cost::float, opened_at::text, created_at::text
+        """, (last_name, first_name, middle_name))
+        conn.commit()
+        return resp(201, dict(cur.fetchone()))
+
+    if method == "PUT":
+        client_id = params.get("id")
+        if not client_id:
+            return resp(400, {"error": "Не указан id"})
+        last_name = body.get("last_name", "").strip()
+        first_name = body.get("first_name", "").strip()
+        middle_name = body.get("middle_name", "").strip()
+        monthly_cost = float(body.get("monthly_cost", 0))
+        opened_at = body.get("opened_at") or None
+        if not last_name or not first_name:
+            return resp(400, {"error": "Фамилия и имя обязательны"})
+        date_sql = f"'{opened_at}'" if opened_at else "CURRENT_DATE"
+        cur.execute(f"""
+            UPDATE {SCHEMA}.clients
+            SET last_name=%s, first_name=%s, middle_name=%s, monthly_cost={monthly_cost}, opened_at={date_sql}
+            WHERE id={int(client_id)}
+            RETURNING id, last_name, first_name, middle_name, monthly_cost::float, opened_at::text
+        """, (last_name, first_name, middle_name))
+        conn.commit()
+        return resp(200, dict(cur.fetchone()))
+
+    return resp(405, {"error": "Method not allowed"})
+
+
 def handler(event: dict, context) -> dict:
     if event.get("httpMethod") == "OPTIONS":
         return {"statusCode": 200, "headers": CORS, "body": ""}
@@ -185,6 +245,8 @@ def handler(event: dict, context) -> dict:
             return handle_analytics(cur)
         if resource == "reminders":
             return handle_reminders(method, params, body, cur, conn)
+        if resource == "clients":
+            return handle_clients(method, params, body, cur, conn)
         return resp(400, {"error": f"Неизвестный ресурс: {resource}"})
     finally:
         cur.close()

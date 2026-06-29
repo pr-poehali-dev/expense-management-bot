@@ -1,6 +1,6 @@
 import Icon from '@/components/ui/icon';
 
-type Page = 'dashboard' | 'income' | 'expenses' | 'categories' | 'analytics' | 'chat' | 'settings';
+type Page = 'dashboard' | 'income' | 'expenses' | 'categories' | 'analytics' | 'clients' | 'chat' | 'settings';
 
 interface SidebarProps {
   activePage: Page;
@@ -13,6 +13,7 @@ const navItems = [
   { id: 'expenses' as Page, label: 'Расходы', icon: 'TrendingDown' },
   { id: 'categories' as Page, label: 'Категории', icon: 'Tag' },
   { id: 'analytics' as Page, label: 'Аналитика', icon: 'BarChart3' },
+  { id: 'clients' as Page, label: 'Клиенты', icon: 'Users' },
   { id: 'chat' as Page, label: 'Ассистент', icon: 'MessageSquare' },
 ];
 
