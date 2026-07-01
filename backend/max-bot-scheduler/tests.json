@@ -1,0 +1,12 @@
+{
+  "tests": [
+    {
+      "name": "GET scheduler run",
+      "method": "GET",
+      "path": "/",
+      "expectedStatus": 200,
+      "expectedBody": {"date": "string"},
+      "bodyMatcher": "partial"
+    }
+  ]
+}

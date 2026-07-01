@@ -1,10 +1,29 @@
 import { useState } from 'react';
 import Icon from '@/components/ui/icon';
 
+const SCHEDULER_URL = "https://functions.poehali.dev/40fefc06-49c5-4ebd-85e7-e0b7b598224e";
+
 export default function Settings() {
   const [profile, setProfile] = useState({ name: 'Иванов Андрей Игоревич', email: 'ivanov@company.ru', currency: 'RUB', timezone: 'Europe/Moscow' });
   const [notifications, setNotifications] = useState({ reminders: true, weeklyReport: true, budgetAlerts: false, chatTips: true });
   const [saved, setSaved] = useState(false);
+  const [schedulerRunning, setSchedulerRunning] = useState(false);
+  const [schedulerResult, setSchedulerResult] = useState<{ sent: number; clients_today: number; total_amount?: number } | null>(null);
+
+  async function runScheduler() {
+    setSchedulerRunning(true);
+    setSchedulerResult(null);
+    try {
+      const res = await fetch(SCHEDULER_URL);
+      const text = await res.text();
+      const data = JSON.parse(typeof JSON.parse(text) === 'string' ? JSON.parse(text) : text);
+      setSchedulerResult(data);
+    } catch {
+      setSchedulerResult(null);
+    } finally {
+      setSchedulerRunning(false);
+    }
+  }
 
   function handleSave() {
     setSaved(true);
@@ -89,6 +108,44 @@ export default function Settings() {
               </button>
             </div>
           ))}
+        </div>
+      </div>
+
+      {/* Max Bot Scheduler */}
+      <div className="stat-card">
+        <div className="flex items-center gap-2 mb-1">
+          <Icon name="Bot" size={14} className="text-primary" />
+          <span className="section-title">Бот Max — уведомления об оплате</span>
+        </div>
+        <p className="text-xs text-muted-foreground mb-4">
+          Бот автоматически отправляет напоминания всем авторизованным пользователям
+          в день оплаты каждого клиента. Запускается ежедневно в 9:00.
+        </p>
+
+        <div className="bg-secondary/40 rounded-md px-3 py-2.5 mb-4">
+          <div className="text-[10px] text-muted-foreground mb-1 uppercase tracking-wider">URL для внешнего cron (запускать в 9:00 каждый день)</div>
+          <div className="font-mono-ibm text-xs text-foreground break-all select-all">{SCHEDULER_URL}</div>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <button
+            onClick={runScheduler}
+            disabled={schedulerRunning}
+            className="fin-btn-secondary flex items-center gap-2"
+          >
+            {schedulerRunning
+              ? <Icon name="Loader2" size={13} className="animate-spin" />
+              : <Icon name="Play" size={13} />}
+            {schedulerRunning ? 'Отправка...' : 'Запустить сейчас'}
+          </button>
+          {schedulerResult && (
+            <span className="text-xs text-income animate-fade-in flex items-center gap-1">
+              <Icon name="CheckCircle" size={12} />
+              {schedulerResult.clients_today === 0
+                ? 'Сегодня нет клиентов с оплатой'
+                : `Отправлено ${schedulerResult.sent} уведомл. · ${schedulerResult.clients_today} клиентов`}
+            </span>
+          )}
         </div>
       </div>
 
