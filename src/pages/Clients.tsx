@@ -11,6 +11,10 @@ function ClientDrawer({ client, onClose, onEdit }: {
 }) {
   const [detail, setDetail] = useState<Client | null>(null);
   const [loading, setLoading] = useState(true);
+  const [quickInput, setQuickInput] = useState('');
+  const [quickSaving, setQuickSaving] = useState(false);
+  const [quickError, setQuickError] = useState('');
+  const [quickSuccess, setQuickSuccess] = useState('');
 
   useEffect(() => {
     api.clients.get(client.id).then(setDetail).finally(() => setLoading(false));
@@ -19,6 +23,51 @@ function ClientDrawer({ client, onClose, onEdit }: {
   const income = detail?.stats?.total_income ?? 0;
   const expense = detail?.stats?.total_expense ?? 0;
   const fullName = [client.last_name, client.first_name, client.middle_name].filter(Boolean).join(' ');
+
+  // Парсинг: -10000 хлеб / +50000 оплата / 15000 услуги
+  function parseQuick(raw: string): { type: 'income' | 'expense'; amount: number; description: string } | null {
+    const m = raw.trim().match(/^([+\-−])?\s*(\d[\d\s]*)\s+(.+)$/);
+    if (!m) return null;
+    const amount = parseFloat(m[2].replace(/\s/g, ''));
+    if (!amount || amount <= 0) return null;
+    const type: 'income' | 'expense' = m[1] === '+' ? 'income' : 'expense';
+    return { type, amount, description: m[3].trim() };
+  }
+
+  async function handleQuickAdd() {
+    setQuickError('');
+    setQuickSuccess('');
+    const parsed = parseQuick(quickInput);
+    if (!parsed) {
+      setQuickError('Формат: −10000 хлеб  или  +50000 оплата');
+      return;
+    }
+    setQuickSaving(true);
+    try {
+      const created = await api.transactions.create({
+        type: parsed.type,
+        amount: parsed.amount,
+        description: parsed.description,
+        date: new Date().toISOString().split('T')[0],
+        client_id: client.id,
+      });
+      const sign = parsed.type === 'income' ? '+' : '−';
+      setQuickSuccess(`${sign}${parsed.amount.toLocaleString('ru-RU')} ₽ — записано`);
+      setQuickInput('');
+      // Обновляем список транзакций
+      setDetail(prev => prev ? {
+        ...prev,
+        transactions: [{ id: created.id, type: parsed.type, amount: parsed.amount, description: parsed.description, date: created.date, category_name: null, category_color: null }, ...(prev.transactions ?? [])],
+        stats: {
+          total_income: (prev.stats?.total_income ?? 0) + (parsed.type === 'income' ? parsed.amount : 0),
+          total_expense: (prev.stats?.total_expense ?? 0) + (parsed.type === 'expense' ? parsed.amount : 0),
+        }
+      } : prev);
+      setTimeout(() => setQuickSuccess(''), 3000);
+    } finally {
+      setQuickSaving(false);
+    }
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end" onClick={onClose}>
@@ -67,6 +116,36 @@ function ClientDrawer({ client, onClose, onEdit }: {
             <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Расходы</div>
             <div className="text-base font-mono-ibm font-semibold text-expense">{formatCurrency(expense)}</div>
           </div>
+        </div>
+
+        {/* Quick add */}
+        <div className="px-6 py-3 border-b border-border">
+          <div className="flex gap-2">
+            <div className="flex-1 relative">
+              <input
+                type="text"
+                placeholder="−10000 аренда  или  +50000 оплата"
+                className="fin-input pr-8 font-mono-ibm text-xs w-full"
+                value={quickInput}
+                onChange={e => { setQuickInput(e.target.value); setQuickError(''); setQuickSuccess(''); }}
+                onKeyDown={e => e.key === 'Enter' && handleQuickAdd()}
+              />
+              {quickInput && (
+                <span className={`absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] font-medium ${quickInput.trim().startsWith('+') ? 'text-income' : 'text-expense'}`}>
+                  {quickInput.trim().startsWith('+') ? 'доход' : 'расход'}
+                </span>
+              )}
+            </div>
+            <button
+              onClick={handleQuickAdd}
+              disabled={quickSaving || !quickInput.trim()}
+              className="fin-btn-primary h-8 px-3 flex items-center gap-1.5 text-xs"
+            >
+              {quickSaving ? <Icon name="Loader2" size={12} className="animate-spin" /> : <Icon name="Plus" size={12} />}
+            </button>
+          </div>
+          {quickError && <div className="text-[11px] text-red-400 mt-1.5">{quickError}</div>}
+          {quickSuccess && <div className="text-[11px] text-income mt-1.5 flex items-center gap-1"><Icon name="CheckCircle" size={11} />{quickSuccess}</div>}
         </div>
 
         {/* Transactions */}
