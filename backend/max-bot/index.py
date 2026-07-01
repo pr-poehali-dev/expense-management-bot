@@ -240,6 +240,100 @@ def handle_add_client(text: str, user_id: int, cur, conn) -> str:
     return ""
 
 
+def handle_income_client(text: str, user_id: int, cur, conn) -> str:
+    """Пошаговый диалог: доход → выбор клиента → сумма → запись."""
+    session = get_session(user_id, cur)
+    state = session["state"]
+    data = session["data"]
+    t = text.strip()
+
+    if t.lower() in ("/отмена", "отмена", "/cancel"):
+        clear_session(user_id, cur, conn)
+        return "❌ Отменено."
+
+    # Шаг 1 — выбор клиента по номеру из списка
+    if state == "income_pick_client":
+        clients = data.get("clients", [])
+        # Попытка выбрать по номеру
+        try:
+            idx = int(t) - 1
+            if 0 <= idx < len(clients):
+                chosen = clients[idx]
+                data["client_id"] = chosen["id"]
+                data["client_name"] = chosen["name"]
+                save_session(user_id, "income_enter_amount", data, cur, conn)
+                return (
+                    f"✅ Клиент: {chosen['name']}\n\n"
+                    f"Введите сумму дохода (₽):\n"
+                    f"(или напишите описание: 15000 оплата за май)"
+                )
+            else:
+                return f"Введите номер от 1 до {len(clients)}:"
+        except ValueError:
+            # Поиск по имени
+            query = t.lower()
+            matches = [c for c in clients if query in c["name"].lower()]
+            if len(matches) == 1:
+                chosen = matches[0]
+                data["client_id"] = chosen["id"]
+                data["client_name"] = chosen["name"]
+                save_session(user_id, "income_enter_amount", data, cur, conn)
+                return (
+                    f"✅ Клиент: {chosen['name']}\n\n"
+                    f"Введите сумму дохода (₽):"
+                )
+            elif len(matches) > 1:
+                lines = "\n".join(f"{i+1}. {c['name']}" for i, c in enumerate(matches))
+                data["clients"] = matches
+                save_session(user_id, "income_pick_client", data, cur, conn)
+                return f"Найдено несколько, уточните:\n\n{lines}"
+            else:
+                return "Клиент не найден. Введите номер из списка или часть имени:"
+
+    # Шаг 2 — ввод суммы (и опционально описания)
+    if state == "income_enter_amount":
+        # Парсим: "15000" или "15000 оплата за май"
+        m = re.match(r'^(\d[\d\s]*)\s*(.*)$', t)
+        if not m:
+            return "Введите сумму цифрами (например: 15000):"
+        try:
+            amount = float(m.group(1).replace(' ', ''))
+        except ValueError:
+            return "Введите сумму цифрами (например: 15000):"
+        if amount <= 0:
+            return "Сумма должна быть больше нуля:"
+        description = m.group(2).strip() or f"Оплата от {data['client_name']}"
+
+        # Ищем первую категорию типа income
+        cur.execute(f"SELECT id FROM {SCHEMA}.categories WHERE type='income' ORDER BY id LIMIT 1")
+        row = cur.fetchone()
+        cat_id = row["id"] if row else "NULL"
+
+        cur.execute(f"""
+            INSERT INTO {SCHEMA}.transactions (type, amount, category_id, client_id, description, date)
+            VALUES ('income', {amount}, {cat_id}, {int(data['client_id'])}, %s, CURRENT_DATE)
+            RETURNING id
+        """, (description,))
+        conn.commit()
+        new_id = cur.fetchone()["id"]
+        clear_session(user_id, cur, conn)
+
+        totals = get_totals(cur)
+        balance = totals["income"] - totals["expense"]
+        sign = "+" if balance >= 0 else ""
+
+        return (
+            f"✅ Доход записан!\n\n"
+            f"👤 {data['client_name']}\n"
+            f"💬 {description}\n"
+            f"💰 +{fmt(amount)}\n"
+            f"🆔 #{new_id}\n\n"
+            f"Текущий баланс: {sign}{fmt(balance)}"
+        )
+
+    return ""
+
+
 def process_message(text: str, chat_id, user_id: int, cur, conn) -> str:
     t = text.strip().lower()
 
@@ -247,6 +341,8 @@ def process_message(text: str, chat_id, user_id: int, cur, conn) -> str:
     session = get_session(user_id, cur)
     if session["state"].startswith("client_"):
         return handle_add_client(text, user_id, cur, conn)
+    if session["state"].startswith("income_"):
+        return handle_income_client(text, user_id, cur, conn)
 
     # /start или /помощь
     if t in ("/start", "start", "/помощь", "помощь", "/help"):
@@ -257,7 +353,8 @@ def process_message(text: str, chat_id, user_id: int, cur, conn) -> str:
             "  +50000 зарплата → доход\n\n"
             "📋 Команды:\n"
             "📊 /баланс — текущий баланс\n"
-            "📈 /доходы — сумма поступлений\n"
+            "📈 /доход — записать оплату от клиента\n"
+            "📈 /доходы — сумма всех поступлений\n"
             "📉 /расходы — анализ трат\n"
             "👥 /клиенты — база клиентов\n"
             "➕ /новый_клиент — добавить клиента\n"
@@ -316,8 +413,29 @@ def process_message(text: str, chat_id, user_id: int, cur, conn) -> str:
         save_session(user_id, "client_last_name", {}, cur, conn)
         return "➕ Добавление клиента\n\nВведите фамилию:\n\n(Для отмены — /отмена)"
 
+    # /доход — записать доход с привязкой к клиенту
+    if t in ("/доход", "доход", "/income_client"):
+        cur.execute(f"""
+            SELECT id, last_name, first_name, middle_name, monthly_cost::float
+            FROM {SCHEMA}.clients
+            ORDER BY last_name, first_name
+            LIMIT 30
+        """)
+        rows = cur.fetchall()
+        if not rows:
+            return "👥 Клиентов пока нет. Добавьте клиента через /новый_клиент"
+        clients = [{"id": r["id"], "name": f"{r['last_name']} {r['first_name']} {r['middle_name']}".strip(), "monthly_cost": r["monthly_cost"]} for r in rows]
+        lines = "\n".join(f"{i+1}. {c['name']} — {fmt(c['monthly_cost'])}/мес" for i, c in enumerate(clients))
+        save_session(user_id, "income_pick_client", {"clients": clients}, cur, conn)
+        return (
+            f"📈 Доход от клиента\n\n"
+            f"Выберите клиента (введите номер или часть имени):\n\n"
+            f"{lines}\n\n"
+            f"(Для отмены — /отмена)"
+        )
+
     # /клиенты
-    if t in ("/клиенты", "клиенты") or "клиент" in t:
+    if t in ("/клиенты", "клиенты"):
         cur.execute(f"""
             SELECT COUNT(*) AS cnt,
                    COALESCE(SUM(monthly_cost),0)::float AS monthly
@@ -327,7 +445,8 @@ def process_message(text: str, chat_id, user_id: int, cur, conn) -> str:
         return (
             f"👥 База клиентов:\n\n"
             f"Всего клиентов: {int(row['cnt'])}\n"
-            f"Выручка в месяц: {fmt(row['monthly'])}"
+            f"Выручка в месяц: {fmt(row['monthly'])}\n\n"
+            f"Записать оплату от клиента — /доход"
         )
 
     # /напоминания
