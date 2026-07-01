@@ -59,6 +59,16 @@ def handle_transactions(method, params, body, cur, conn):
         total = cur.fetchone()["cnt"]
         return resp(200, {"transactions": rows, "total": total})
 
+    if method == "DELETE":
+        tx_id = params.get("id")
+        if not tx_id:
+            return resp(400, {"error": "Не указан id"})
+        cur.execute(f"DELETE FROM {SCHEMA}.transactions WHERE id = {int(tx_id)} RETURNING id")
+        conn.commit()
+        if not cur.fetchone():
+            return resp(404, {"error": "Транзакция не найдена"})
+        return resp(200, {"ok": True})
+
     if method == "POST":
         tx_type = body.get("type")
         amount = float(body.get("amount", 0))

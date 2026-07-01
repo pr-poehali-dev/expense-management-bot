@@ -12,6 +12,7 @@ export default function Expenses() {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ amount: '', category_id: '', client_id: '', description: '', date: '' });
   const [search, setSearch] = useState('');
+  const [deletingId, setDeletingId] = useState<number | null>(null);
 
   useEffect(() => {
     Promise.all([
@@ -40,6 +41,17 @@ export default function Expenses() {
     total: transactions.filter(t => t.category_id === cat.id).reduce((s, t) => s + t.amount, 0),
   })).filter(c => c.total > 0).sort((a, b) => b.total - a.total);
   const maxCat = byCat[0]?.total ?? 1;
+
+  async function handleDelete(id: number) {
+    if (!confirm('Удалить эту транзакцию?')) return;
+    setDeletingId(id);
+    try {
+      await api.transactions.delete(id);
+      setTransactions(prev => prev.filter(t => t.id !== id));
+    } finally {
+      setDeletingId(null);
+    }
+  }
 
   async function handleSave() {
     if (!form.amount || !form.description) return;
@@ -179,14 +191,15 @@ export default function Expenses() {
                 <th className="text-left py-2 px-2 text-xs text-muted-foreground font-medium">Категория</th>
                 <th className="text-left py-2 px-2 text-xs text-muted-foreground font-medium">Клиент</th>
                 <th className="text-right py-2 px-2 text-xs text-muted-foreground font-medium">Сумма</th>
+                <th className="w-8" />
               </tr>
             </thead>
             <tbody>
               {filtered.length === 0 && (
-                <tr><td colSpan={5} className="py-8 text-center text-xs text-muted-foreground">Транзакции не найдены</td></tr>
+                <tr><td colSpan={6} className="py-8 text-center text-xs text-muted-foreground">Транзакции не найдены</td></tr>
               )}
               {filtered.map((t) => (
-                <tr key={t.id} className="border-b border-border/40 hover:bg-secondary/30 transition-colors">
+                <tr key={t.id} className="border-b border-border/40 hover:bg-secondary/30 transition-colors group">
                   <td className="py-3 px-2 text-xs text-muted-foreground font-mono-ibm">{formatDate(t.date)}</td>
                   <td className="py-3 px-2 text-sm text-foreground">{t.description}</td>
                   <td className="py-3 px-2"><span className="badge-expense">{t.category_name ?? '—'}</span></td>
@@ -200,6 +213,17 @@ export default function Expenses() {
                     )}
                   </td>
                   <td className="py-3 px-2 text-right font-mono-ibm text-sm text-expense font-medium">−{formatCurrency(t.amount)}</td>
+                  <td className="py-3 px-1">
+                    <button
+                      onClick={() => handleDelete(t.id)}
+                      disabled={deletingId === t.id}
+                      className="opacity-0 group-hover:opacity-100 w-6 h-6 flex items-center justify-center rounded text-muted-foreground hover:text-red-400 hover:bg-red-500/10 transition-all"
+                    >
+                      {deletingId === t.id
+                        ? <Icon name="Loader2" size={12} className="animate-spin" />
+                        : <Icon name="Trash2" size={12} />}
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>

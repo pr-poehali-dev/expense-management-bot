@@ -84,6 +84,8 @@ export const api = {
       request<Transaction>("POST", {}, { resource: "transaction", ...data }),
     listByClient: (client_id: number) =>
       request<{ transactions: Transaction[]; total: number }>("GET", { resource: "transactions", client_id: String(client_id) }),
+    delete: (id: number) =>
+      request<{ ok: boolean }>("DELETE", { resource: "transactions", id: String(id) }),
   },
   categories: {
     list: (type?: "income" | "expense") =>
