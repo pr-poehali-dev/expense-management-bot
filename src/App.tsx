@@ -10,6 +10,8 @@ import ChatBot from '@/pages/ChatBot';
 import Settings from '@/pages/Settings';
 import Clients from '@/pages/Clients';
 import BotAccess from '@/pages/BotAccess';
+import Login from '@/pages/Login';
+import Icon from '@/components/ui/icon';
 
 type Page = 'dashboard' | 'income' | 'expenses' | 'categories' | 'analytics' | 'clients' | 'chat' | 'botaccess' | 'settings';
 
@@ -26,7 +28,21 @@ const pageTitles: Record<Page, string> = {
 };
 
 export default function App() {
+  const [token, setToken] = useState<string | null>(() => localStorage.getItem('auth_token'));
   const [activePage, setActivePage] = useState<Page>('dashboard');
+
+  function handleLogin(t: string) {
+    setToken(t);
+  }
+
+  function handleLogout() {
+    localStorage.removeItem('auth_token');
+    setToken(null);
+  }
+
+  if (!token) {
+    return <Login onLogin={handleLogin} />;
+  }
 
   function renderPage() {
     switch (activePage) {
@@ -59,11 +75,12 @@ export default function App() {
               {new Date().toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' })}
             </div>
             <div className="w-px h-4 bg-border" />
-            <button className="relative w-7 h-7 flex items-center justify-center rounded hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="w-4 h-4">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6 6 0 10-12 0v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
-              </svg>
-              <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-primary" />
+            <button
+              onClick={handleLogout}
+              title="Выйти"
+              className="w-7 h-7 flex items-center justify-center rounded hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground"
+            >
+              <Icon name="LogOut" size={14} />
             </button>
           </div>
         </header>
