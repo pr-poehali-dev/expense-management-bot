@@ -34,8 +34,10 @@ def send_max_message(chat_id: str, text: str):
             json={"text": text},
             timeout=10,
         )
+        print(f"Max API response: {r.status_code} {r.text[:200]}")
         return r.status_code == 200
-    except Exception:
+    except Exception as e:
+        print(f"Max API error: {e}")
         return False
 
 

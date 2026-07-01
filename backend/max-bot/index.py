@@ -344,6 +344,10 @@ def process_message(text: str, chat_id, user_id: int, cur, conn) -> str:
     if session["state"].startswith("income_"):
         return handle_income_client(text, user_id, cur, conn)
 
+    # /mychatid — узнать свой chat_id для настройки 2FA
+    if t in ("/mychatid", "mychatid"):
+        return f"🆔 Ваш Chat ID: {chat_id}\n\nСкопируйте это число и вставьте в секрет MAX_BOT_ADMIN_CHAT_ID"
+
     # /start или /помощь
     if t in ("/start", "start", "/помощь", "помощь", "/help"):
         return (
