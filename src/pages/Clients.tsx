@@ -119,6 +119,7 @@ const emptyForm = {
   middle_name: '',
   monthly_cost: '',
   opened_at: '',
+  payment_day: '',
 };
 
 export default function Clients() {
@@ -160,6 +161,7 @@ export default function Clients() {
       middle_name: c.middle_name,
       monthly_cost: String(c.monthly_cost),
       opened_at: c.opened_at,
+      payment_day: c.payment_day != null ? String(c.payment_day) : '',
     });
     setShowForm(true);
   }
@@ -179,6 +181,7 @@ export default function Clients() {
       middle_name: form.middle_name.trim(),
       monthly_cost: parseFloat(form.monthly_cost) || 0,
       opened_at: form.opened_at || new Date().toISOString().split('T')[0],
+      payment_day: form.payment_day ? parseInt(form.payment_day) : null,
     };
     try {
       if (editId !== null) {
@@ -321,6 +324,20 @@ export default function Clients() {
                 className="fin-input"
                 value={form.opened_at}
                 onChange={e => setForm({ ...form, opened_at: e.target.value })}
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-muted-foreground mb-1.5">
+                День оплаты <span className="text-muted-foreground/60">(1–31, для напоминания)</span>
+              </label>
+              <input
+                type="number"
+                min={1}
+                max={31}
+                placeholder="например, 5"
+                className="fin-input font-mono-ibm"
+                value={form.payment_day}
+                onChange={e => setForm({ ...form, payment_day: e.target.value })}
               />
             </div>
           </div>

@@ -57,6 +57,7 @@ export interface Client {
   monthly_cost: number;
   opened_at: string;
   created_at: string;
+  payment_day: number | null;
   tx_count?: number;
   total_income?: number;
   total_expense?: number;
@@ -114,9 +115,9 @@ export const api = {
       }),
     get: (id: number) =>
       request<Client>("GET", { resource: "clients", id: String(id) }),
-    create: (data: { last_name: string; first_name: string; middle_name: string; monthly_cost: number; opened_at: string }) =>
+    create: (data: { last_name: string; first_name: string; middle_name: string; monthly_cost: number; opened_at: string; payment_day?: number | null }) =>
       request<Client>("POST", {}, { resource: "clients", ...data }),
-    update: (id: number, data: { last_name: string; first_name: string; middle_name: string; monthly_cost: number; opened_at: string }) =>
+    update: (id: number, data: { last_name: string; first_name: string; middle_name: string; monthly_cost: number; opened_at: string; payment_day?: number | null }) =>
       request<Client>("PUT", { resource: "clients", id: String(id) }, data),
   },
   whitelist: {

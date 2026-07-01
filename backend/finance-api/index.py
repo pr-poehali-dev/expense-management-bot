@@ -222,13 +222,14 @@ def handle_clients(method, params, body, cur, conn):
         cur.execute(f"""
             SELECT cl.id, cl.last_name, cl.first_name, cl.middle_name,
                    cl.monthly_cost::float, cl.opened_at::text, cl.created_at::text,
+                   cl.payment_day,
                    COUNT(t.id) AS tx_count,
                    COALESCE(SUM(CASE WHEN t.type='income' THEN t.amount ELSE 0 END),0)::float AS total_income,
                    COALESCE(SUM(CASE WHEN t.type='expense' THEN t.amount ELSE 0 END),0)::float AS total_expense
             FROM {SCHEMA}.clients cl
             LEFT JOIN {SCHEMA}.transactions t ON t.client_id = cl.id
             {where}
-            GROUP BY cl.id, cl.last_name, cl.first_name, cl.middle_name, cl.monthly_cost, cl.opened_at, cl.created_at
+            GROUP BY cl.id, cl.last_name, cl.first_name, cl.middle_name, cl.monthly_cost, cl.opened_at, cl.created_at, cl.payment_day
             ORDER BY cl.last_name, cl.first_name
         """)
         rows = [dict(r) for r in cur.fetchall()]
@@ -237,21 +238,58 @@ def handle_clients(method, params, body, cur, conn):
         return resp(200, {"clients": rows, "total": summary["cnt"], "total_monthly": summary["total"]})
 
     if method == "POST":
+        import datetime
         last_name = body.get("last_name", "").strip()
         first_name = body.get("first_name", "").strip()
         middle_name = body.get("middle_name", "").strip()
         monthly_cost = float(body.get("monthly_cost", 0))
         opened_at = body.get("opened_at") or None
+        payment_day = body.get("payment_day")
+        payment_day_sql = str(int(payment_day)) if payment_day else "NULL"
         if not last_name or not first_name:
             return resp(400, {"error": "Фамилия и имя обязательны"})
         date_sql = f"'{opened_at}'" if opened_at else "CURRENT_DATE"
         cur.execute(f"""
-            INSERT INTO {SCHEMA}.clients (last_name, first_name, middle_name, monthly_cost, opened_at)
-            VALUES (%s, %s, %s, {monthly_cost}, {date_sql})
-            RETURNING id, last_name, first_name, middle_name, monthly_cost::float, opened_at::text, created_at::text
+            INSERT INTO {SCHEMA}.clients (last_name, first_name, middle_name, monthly_cost, opened_at, payment_day)
+            VALUES (%s, %s, %s, {monthly_cost}, {date_sql}, {payment_day_sql})
+            RETURNING id, last_name, first_name, middle_name, monthly_cost::float,
+                      opened_at::text, created_at::text, payment_day
         """, (last_name, first_name, middle_name))
         conn.commit()
-        return resp(201, dict(cur.fetchone()))
+        client = dict(cur.fetchone())
+
+        # Автоматически создаём напоминание об оплате если указан день
+        if payment_day and monthly_cost > 0:
+            day = int(payment_day)
+            today = datetime.date.today()
+            # Ближайшая дата оплаты: в этом месяце если ещё не прошла, иначе — в следующем
+            try:
+                due = today.replace(day=day)
+            except ValueError:
+                # Если дня нет в месяце (напр. 31 февраля) — берём последний день
+                import calendar
+                last_day = calendar.monthrange(today.year, today.month)[1]
+                due = today.replace(day=last_day)
+            if due < today:
+                # Переходим на следующий месяц
+                if today.month == 12:
+                    due = due.replace(year=today.year + 1, month=1)
+                else:
+                    try:
+                        due = due.replace(month=today.month + 1)
+                    except ValueError:
+                        import calendar
+                        last_day = calendar.monthrange(today.year, today.month + 1)[1]
+                        due = due.replace(month=today.month + 1, day=last_day)
+            full_name = f"{last_name} {first_name}".strip()
+            title = f"Оплата: {full_name}"
+            cur.execute(f"""
+                INSERT INTO {SCHEMA}.reminders (title, amount, due_date, status)
+                VALUES (%s, {monthly_cost}, '{due.isoformat()}', 'upcoming')
+            """, (title,))
+            conn.commit()
+
+        return resp(201, client)
 
     if method == "PUT":
         client_id = params.get("id")
@@ -262,14 +300,18 @@ def handle_clients(method, params, body, cur, conn):
         middle_name = body.get("middle_name", "").strip()
         monthly_cost = float(body.get("monthly_cost", 0))
         opened_at = body.get("opened_at") or None
+        payment_day = body.get("payment_day")
+        payment_day_sql = str(int(payment_day)) if payment_day else "NULL"
         if not last_name or not first_name:
             return resp(400, {"error": "Фамилия и имя обязательны"})
         date_sql = f"'{opened_at}'" if opened_at else "CURRENT_DATE"
         cur.execute(f"""
             UPDATE {SCHEMA}.clients
-            SET last_name=%s, first_name=%s, middle_name=%s, monthly_cost={monthly_cost}, opened_at={date_sql}
+            SET last_name=%s, first_name=%s, middle_name=%s, monthly_cost={monthly_cost},
+                opened_at={date_sql}, payment_day={payment_day_sql}
             WHERE id={int(client_id)}
-            RETURNING id, last_name, first_name, middle_name, monthly_cost::float, opened_at::text
+            RETURNING id, last_name, first_name, middle_name, monthly_cost::float,
+                      opened_at::text, payment_day
         """, (last_name, first_name, middle_name))
         conn.commit()
         return resp(200, dict(cur.fetchone()))
