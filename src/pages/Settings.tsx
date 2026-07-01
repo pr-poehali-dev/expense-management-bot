@@ -4,8 +4,18 @@ import Icon from '@/components/ui/icon';
 const SCHEDULER_URL = "https://functions.poehali.dev/40fefc06-49c5-4ebd-85e7-e0b7b598224e";
 
 export default function Settings() {
-  const [profile, setProfile] = useState({ name: 'Иванов Андрей Игоревич', email: 'ivanov@company.ru', currency: 'RUB', timezone: 'Europe/Moscow' });
-  const [notifications, setNotifications] = useState({ reminders: true, weeklyReport: true, budgetAlerts: false, chatTips: true });
+  const [profile, setProfile] = useState(() => {
+    try {
+      const saved = localStorage.getItem('settings_profile');
+      return saved ? JSON.parse(saved) : { name: 'Иванов Андрей Игоревич', email: 'ivanov@company.ru', currency: 'RUB', timezone: 'Europe/Moscow' };
+    } catch { return { name: 'Иванов Андрей Игоревич', email: 'ivanov@company.ru', currency: 'RUB', timezone: 'Europe/Moscow' }; }
+  });
+  const [notifications, setNotifications] = useState(() => {
+    try {
+      const saved = localStorage.getItem('settings_notifications');
+      return saved ? JSON.parse(saved) : { reminders: true, weeklyReport: true, budgetAlerts: false, chatTips: true };
+    } catch { return { reminders: true, weeklyReport: true, budgetAlerts: false, chatTips: true }; }
+  });
   const [saved, setSaved] = useState(false);
   const [schedulerRunning, setSchedulerRunning] = useState(false);
   const [schedulerResult, setSchedulerResult] = useState<{ sent: number; clients_today: number; total_amount?: number } | null>(null);
@@ -26,6 +36,8 @@ export default function Settings() {
   }
 
   function handleSave() {
+    localStorage.setItem('settings_profile', JSON.stringify(profile));
+    localStorage.setItem('settings_notifications', JSON.stringify(notifications));
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   }
