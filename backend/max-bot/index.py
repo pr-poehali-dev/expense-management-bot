@@ -39,51 +39,24 @@ def normalize_phone(phone: str) -> str:
     return '+' + digits
 
 
-def is_allowed(user_id: int, phone: str, cur) -> bool:
-    """Проверяем доступ: если whitelist пуст — доступ открыт всем, иначе — только разрешённым."""
+def is_allowed(user_id: int, cur) -> bool:
+    """
+    Проверяем доступ по user_id.
+    Если whitelist пуст — доступ открыт всем.
+    Иначе — только тем, чей user_id добавлен в список.
+    """
     cur.execute(f"SELECT COUNT(*) AS cnt FROM {SCHEMA}.bot_whitelist WHERE is_active = TRUE")
     total = cur.fetchone()["cnt"]
     if total == 0:
-        return True  # whitelist пуст — режим открытого доступа
+        return True  # whitelist пуст — открытый режим
 
-    # Проверяем по user_id (если уже привязан)
-    if user_id:
-        cur.execute(f"SELECT id FROM {SCHEMA}.bot_whitelist WHERE user_id = {int(user_id)} AND is_active = TRUE")
-        if cur.fetchone():
-            return True
+    if not user_id:
+        return False
 
-    # Проверяем по номеру телефона
-    if phone:
-        norm = normalize_phone(phone)
-        cur.execute(f"SELECT id FROM {SCHEMA}.bot_whitelist WHERE phone = %s AND is_active = TRUE", (norm,))
-        row = cur.fetchone()
-        if row:
-            # Привязываем user_id к этому номеру
-            if user_id:
-                cur.execute(
-                    f"UPDATE {SCHEMA}.bot_whitelist SET user_id = {int(user_id)} WHERE phone = %s",
-                    (norm,)
-                )
-            return True
-
-    return False
-
-
-def get_user_phone(user_id: int) -> str:
-    """Запрашиваем номер телефона пользователя через Max API."""
-    try:
-        token = get_token()
-        r = requests.get(
-            f"{MAX_API}/users/{user_id}",
-            headers={"Authorization": token},
-            timeout=5,
-        )
-        if r.ok:
-            data = r.json()
-            return data.get("phone", "") or ""
-    except Exception:
-        pass
-    return ""
+    cur.execute(
+        f"SELECT id FROM {SCHEMA}.bot_whitelist WHERE user_id = {int(user_id)} AND is_active = TRUE"
+    )
+    return cur.fetchone() is not None
 
 
 def send_message(chat_id, text):
@@ -320,13 +293,35 @@ def handler(event: dict, context) -> dict:
             cur = conn.cursor(cursor_factory=RealDictCursor)
             try:
                 user_id_int = sender.get("user_id") or chat_id
-                phone = get_user_phone(user_id_int)
-                if not is_allowed(user_id_int, phone, cur):
+
+                # Команда /привязать +79001234567 — привязывает user_id к номеру в whitelist
+                t_check = text.strip()
+                if t_check.lower().startswith("/привязать") or t_check.lower().startswith("/link"):
+                    parts = t_check.split(maxsplit=1)
+                    phone_raw = parts[1].strip() if len(parts) > 1 else ""
+                    if phone_raw:
+                        norm = normalize_phone(phone_raw)
+                        cur.execute(
+                            f"UPDATE {SCHEMA}.bot_whitelist SET user_id = {int(user_id_int)} WHERE phone = %s AND is_active = TRUE RETURNING id",
+                            (norm,)
+                        )
+                        conn.commit()
+                        if cur.fetchone():
+                            send_message(chat_id, "✅ Доступ открыт! Теперь вы в списке разрешённых пользователей.")
+                        else:
+                            send_message(chat_id, f"❌ Номер {norm} не найден в списке. Обратитесь к администратору.")
+                        return {"statusCode": 200, "headers": CORS, "body": "ok"}
+                    else:
+                        send_message(chat_id, "Укажите номер телефона:\n/привязать +79001234567")
+                        return {"statusCode": 200, "headers": CORS, "body": "ok"}
+
+                if not is_allowed(user_id_int, cur):
                     conn.commit()
                     send_message(chat_id,
                         "🔒 Доступ закрыт.\n\n"
-                        "Этот бот доступен только авторизованным пользователям. "
-                        "Обратитесь к администратору системы."
+                        "Для получения доступа отправьте команду:\n"
+                        "/привязать +79001234567\n\n"
+                        "Замените номер на тот, что добавил администратор."
                     )
                     return {"statusCode": 200, "headers": CORS, "body": "ok"}
                 conn.commit()
