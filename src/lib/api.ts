@@ -95,7 +95,7 @@ export const api = {
         ...(type ? { type } : {}),
       }),
     create: (data: { name: string; type: string; color: string; icon: string }) =>
-      request<Category>("POST", {}, { resource: "category", ...data }),
+      request<Category>("POST", {}, { resource: "categories", ...data }),
   },
   analytics: {
     get: () => request<AnalyticsData>("GET", { resource: "analytics" }),
