@@ -53,7 +53,7 @@ export default function Settings() {
       <div className="stat-card space-y-4">
         <div className="flex items-center gap-3 mb-5">
           <div className="w-12 h-12 rounded-full bg-secondary flex items-center justify-center text-lg font-semibold text-foreground">
-            АИ
+            {profile.name.split(' ').filter(Boolean).slice(0, 2).map((w: string) => w[0]).join('').toUpperCase() || '?'}
           </div>
           <div>
             <div className="text-sm font-medium text-foreground">{profile.name}</div>
