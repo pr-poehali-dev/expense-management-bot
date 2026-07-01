@@ -88,8 +88,112 @@ def fmt(amount):
     return f"{amount:,.0f} ₽".replace(",", " ")
 
 
-def process_message(text: str, chat_id, cur) -> str:
+def get_session(user_id: int, cur) -> dict:
+    cur.execute(f"SELECT state, data FROM {SCHEMA}.bot_sessions WHERE user_id = {int(user_id)}")
+    row = cur.fetchone()
+    return {"state": row["state"], "data": row["data"]} if row else {"state": "", "data": {}}
+
+
+def save_session(user_id: int, state: str, data: dict, cur, conn):
+    cur.execute(f"""
+        INSERT INTO {SCHEMA}.bot_sessions (user_id, state, data, updated_at)
+        VALUES ({int(user_id)}, %s, %s::jsonb, NOW())
+        ON CONFLICT (user_id) DO UPDATE SET state = EXCLUDED.state, data = EXCLUDED.data, updated_at = NOW()
+    """, (state, json.dumps(data, ensure_ascii=False)))
+    conn.commit()
+
+
+def clear_session(user_id: int, cur, conn):
+    cur.execute(f"DELETE FROM {SCHEMA}.bot_sessions WHERE user_id = {int(user_id)}")
+    conn.commit()
+
+
+def handle_add_client(text: str, user_id: int, cur, conn) -> str:
+    """Пошаговый диалог добавления клиента."""
+    session = get_session(user_id, cur)
+    state = session["state"]
+    data = session["data"]
+    t = text.strip()
+
+    # Отмена в любой момент
+    if t.lower() in ("/отмена", "отмена", "/cancel"):
+        clear_session(user_id, cur, conn)
+        return "❌ Добавление клиента отменено."
+
+    # Шаг 1 — фамилия
+    if state == "client_last_name":
+        if len(t) < 2:
+            return "Введите фамилию (минимум 2 символа):"
+        data["last_name"] = t
+        save_session(user_id, "client_first_name", data, cur, conn)
+        return f"✅ Фамилия: {t}\n\nВведите имя:"
+
+    # Шаг 2 — имя
+    if state == "client_first_name":
+        if len(t) < 2:
+            return "Введите имя (минимум 2 символа):"
+        data["first_name"] = t
+        save_session(user_id, "client_middle_name", data, cur, conn)
+        return f"✅ Имя: {t}\n\nВведите отчество (или напишите «нет»):"
+
+    # Шаг 3 — отчество
+    if state == "client_middle_name":
+        data["middle_name"] = "" if t.lower() in ("нет", "-", "—") else t
+        save_session(user_id, "client_cost", data, cur, conn)
+        return f"✅ Отчество: {data['middle_name'] or '—'}\n\nВведите ежемесячную стоимость (в рублях, например 15000):"
+
+    # Шаг 4 — стоимость
+    if state == "client_cost":
+        digits = re.sub(r'[^\d.]', '', t)
+        try:
+            cost = float(digits)
+        except ValueError:
+            return "Введите сумму цифрами (например: 15000):"
+        data["monthly_cost"] = cost
+        save_session(user_id, "client_confirm", data, cur, conn)
+        ln = data.get("last_name", "")
+        fn = data.get("first_name", "")
+        mn = data.get("middle_name", "")
+        full = f"{ln} {fn} {mn}".strip()
+        return (
+            f"📋 Проверьте данные клиента:\n\n"
+            f"👤 {full}\n"
+            f"💰 Ежемесячно: {fmt(cost)}\n\n"
+            f"Всё верно? Ответьте «да» или «нет»"
+        )
+
+    # Шаг 5 — подтверждение
+    if state == "client_confirm":
+        if t.lower() in ("да", "yes", "верно", "ок", "ok", "+"):
+            cur.execute(f"""
+                INSERT INTO {SCHEMA}.clients (last_name, first_name, middle_name, monthly_cost, opened_at)
+                VALUES (%s, %s, %s, %s, CURRENT_DATE)
+                RETURNING id
+            """, (data["last_name"], data["first_name"], data.get("middle_name", ""), data["monthly_cost"]))
+            conn.commit()
+            new_id = cur.fetchone()["id"]
+            clear_session(user_id, cur, conn)
+            full = f"{data['last_name']} {data['first_name']} {data.get('middle_name', '')}".strip()
+            return (
+                f"✅ Клиент добавлен!\n\n"
+                f"👤 {full}\n"
+                f"💰 {fmt(data['monthly_cost'])} / мес\n"
+                f"🆔 #{new_id}"
+            )
+        else:
+            clear_session(user_id, cur, conn)
+            return "❌ Отменено. Для повторного добавления отправьте /новый_клиент"
+
+    return ""
+
+
+def process_message(text: str, chat_id, user_id: int, cur, conn) -> str:
     t = text.strip().lower()
+
+    # Проверяем — не в диалоге ли пользователь
+    session = get_session(user_id, cur)
+    if session["state"].startswith("client_"):
+        return handle_add_client(text, user_id, cur, conn)
 
     # /start или /помощь
     if t in ("/start", "start", "/помощь", "помощь", "/help"):
@@ -100,6 +204,7 @@ def process_message(text: str, chat_id, cur) -> str:
             "📈 /доходы — сумма поступлений\n"
             "📉 /расходы — анализ трат\n"
             "👥 /клиенты — база клиентов\n"
+            "➕ /новый_клиент — добавить клиента\n"
             "🔔 /напоминания — предстоящие платежи\n\n"
             "Или просто напиши что-нибудь — я отвечу!"
         )
@@ -150,6 +255,11 @@ def process_message(text: str, chat_id, cur) -> str:
             f"📉 Расходы всего: {fmt(totals['expense'])}\n\n"
             f"Топ категорий:\n{lines or '  Нет данных'}"
         )
+
+    # /новый_клиент
+    if t in ("/новый_клиент", "новый_клиент", "/add_client", "/новый клиент", "новый клиент"):
+        save_session(user_id, "client_last_name", {}, cur, conn)
+        return "➕ Добавление клиента\n\nВведите фамилию:\n\n(Для отмены — /отмена)"
 
     # /клиенты
     if t in ("/клиенты", "клиенты") or "клиент" in t:
@@ -210,7 +320,7 @@ def process_message(text: str, chat_id, cur) -> str:
     return (
         f"🤖 Я финансовый ассистент ФинансПро.\n\n"
         f"Текущий баланс: {fmt(balance)}\n\n"
-        f"Команды: /баланс /доходы /расходы /клиенты /напоминания"
+        f"Команды: /баланс /доходы /расходы /клиенты /новый_клиент /напоминания"
     )
 
 
@@ -325,7 +435,7 @@ def handler(event: dict, context) -> dict:
                     )
                     return {"statusCode": 200, "headers": CORS, "body": "ok"}
                 conn.commit()
-                reply = process_message(text, chat_id, cur)
+                reply = process_message(text, chat_id, user_id_int, cur, conn)
             finally:
                 cur.close()
                 conn.close()
