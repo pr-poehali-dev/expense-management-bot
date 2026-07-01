@@ -150,28 +150,80 @@ def handle_add_client(text: str, user_id: int, cur, conn) -> str:
         except ValueError:
             return "Введите сумму цифрами (например: 15000):"
         data["monthly_cost"] = cost
+        save_session(user_id, "client_payment_day", data, cur, conn)
+        return (
+            f"✅ Стоимость: {fmt(cost)} / мес\n\n"
+            f"📅 Введите день месяца для напоминания об оплате (1–31):\n\n"
+            f"(или напишите «нет», чтобы пропустить)"
+        )
+
+    # Шаг 5 — день оплаты
+    if state == "client_payment_day":
+        if t.lower() in ("нет", "-", "—", "no"):
+            data["payment_day"] = None
+        else:
+            digits = re.sub(r'\D', '', t)
+            try:
+                day = int(digits)
+                if not (1 <= day <= 31):
+                    return "Введите число от 1 до 31 (или «нет» чтобы пропустить):"
+                data["payment_day"] = day
+            except ValueError:
+                return "Введите число от 1 до 31 (или «нет» чтобы пропустить):"
         save_session(user_id, "client_confirm", data, cur, conn)
         ln = data.get("last_name", "")
         fn = data.get("first_name", "")
         mn = data.get("middle_name", "")
         full = f"{ln} {fn} {mn}".strip()
+        payment_day = data.get("payment_day")
+        payment_str = f"каждое {payment_day}-е число" if payment_day else "без напоминания"
         return (
             f"📋 Проверьте данные клиента:\n\n"
             f"👤 {full}\n"
-            f"💰 Ежемесячно: {fmt(cost)}\n\n"
+            f"💰 Ежемесячно: {fmt(data['monthly_cost'])}\n"
+            f"🔔 Напоминание: {payment_str}\n\n"
             f"Всё верно? Ответьте «да» или «нет»"
         )
 
-    # Шаг 5 — подтверждение
+    # Шаг 6 — подтверждение
     if state == "client_confirm":
         if t.lower() in ("да", "yes", "верно", "ок", "ok", "+"):
+            import datetime, calendar
+            payment_day = data.get("payment_day")
+            payment_day_sql = str(int(payment_day)) if payment_day else "NULL"
             cur.execute(f"""
-                INSERT INTO {SCHEMA}.clients (last_name, first_name, middle_name, monthly_cost, opened_at)
-                VALUES (%s, %s, %s, %s, CURRENT_DATE)
+                INSERT INTO {SCHEMA}.clients (last_name, first_name, middle_name, monthly_cost, opened_at, payment_day)
+                VALUES (%s, %s, %s, %s, CURRENT_DATE, {payment_day_sql})
                 RETURNING id
             """, (data["last_name"], data["first_name"], data.get("middle_name", ""), data["monthly_cost"]))
             conn.commit()
             new_id = cur.fetchone()["id"]
+
+            # Создаём напоминание об оплате
+            reminder_msg = ""
+            if payment_day and data["monthly_cost"] > 0:
+                day = int(payment_day)
+                today = datetime.date.today()
+                try:
+                    due = today.replace(day=day)
+                except ValueError:
+                    due = today.replace(day=calendar.monthrange(today.year, today.month)[1])
+                if due < today:
+                    next_month = today.month + 1 if today.month < 12 else 1
+                    next_year = today.year if today.month < 12 else today.year + 1
+                    try:
+                        due = due.replace(year=next_year, month=next_month)
+                    except ValueError:
+                        due = due.replace(year=next_year, month=next_month,
+                                          day=calendar.monthrange(next_year, next_month)[1])
+                full_name = f"{data['last_name']} {data['first_name']}".strip()
+                cur.execute(f"""
+                    INSERT INTO {SCHEMA}.reminders (title, amount, due_date, status)
+                    VALUES (%s, {data['monthly_cost']}, '{due.isoformat()}', 'upcoming')
+                """, (f"Оплата: {full_name}",))
+                conn.commit()
+                reminder_msg = f"\n🔔 Напоминание создано на {due.strftime('%d.%m.%Y')}"
+
             clear_session(user_id, cur, conn)
             full = f"{data['last_name']} {data['first_name']} {data.get('middle_name', '')}".strip()
             return (
@@ -179,6 +231,7 @@ def handle_add_client(text: str, user_id: int, cur, conn) -> str:
                 f"👤 {full}\n"
                 f"💰 {fmt(data['monthly_cost'])} / мес\n"
                 f"🆔 #{new_id}"
+                f"{reminder_msg}"
             )
         else:
             clear_session(user_id, cur, conn)
