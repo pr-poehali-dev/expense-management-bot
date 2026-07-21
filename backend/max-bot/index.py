@@ -84,6 +84,17 @@ def get_totals(cur):
     return dict(cur.fetchone())
 
 
+def get_totals_month(cur):
+    cur.execute(f"""
+        SELECT
+            COALESCE(SUM(CASE WHEN type='income' THEN amount ELSE 0 END), 0)::float AS income,
+            COALESCE(SUM(CASE WHEN type='expense' THEN amount ELSE 0 END), 0)::float AS expense
+        FROM {SCHEMA}.transactions
+        WHERE date_trunc('month', date) = date_trunc('month', CURRENT_DATE)
+    """)
+    return dict(cur.fetchone())
+
+
 def fmt(amount):
     return f"{amount:,.0f} ₽".replace(",", " ")
 
@@ -322,13 +333,18 @@ def handle_income_client(text: str, user_id: int, cur, conn) -> str:
         balance = totals["income"] - totals["expense"]
         sign = "+" if balance >= 0 else ""
 
+        month_totals = get_totals_month(cur)
+        month_balance = month_totals["income"] - month_totals["expense"]
+        month_sign = "+" if month_balance >= 0 else ""
+
         return (
             f"✅ Доход записан!\n\n"
             f"👤 {data['client_name']}\n"
             f"💬 {description}\n"
             f"💰 +{fmt(amount)}\n"
             f"🆔 #{new_id}\n\n"
-            f"Текущий баланс: {sign}{fmt(balance)}"
+            f"Текущий баланс: {sign}{fmt(balance)}\n"
+            f"📅 Баланс за месяц: {month_sign}{fmt(month_balance)}"
         )
 
     return ""
@@ -535,13 +551,18 @@ def process_message(text: str, chat_id, user_id: int, cur, conn) -> str:
             balance = totals["income"] - totals["expense"]
             balance_sign = "+" if balance >= 0 else ""
 
+            month_totals = get_totals_month(cur)
+            month_balance = month_totals["income"] - month_totals["expense"]
+            month_sign = "+" if month_balance >= 0 else ""
+
             return (
                 f"{icon} {tx_word} записан!\n\n"
                 f"💬 {description}\n"
                 f"💰 {sign_out}{fmt(amount)}\n"
                 f"🏷 {cat_name}\n"
                 f"🆔 #{new_id}\n\n"
-                f"Текущий баланс: {balance_sign}{fmt(balance)}"
+                f"Текущий баланс: {balance_sign}{fmt(balance)}\n"
+                f"📅 Баланс за месяц: {month_sign}{fmt(month_balance)}"
             )
 
     # Default
