@@ -344,7 +344,9 @@ def handle_income_client(text: str, user_id: int, cur, conn) -> str:
             f"💰 +{fmt(amount)}\n"
             f"🆔 #{new_id}\n\n"
             f"Текущий баланс: {sign}{fmt(balance)}\n"
-            f"📅 Баланс за месяц: {month_sign}{fmt(month_balance)}"
+            f"📅 Баланс за месяц: {month_sign}{fmt(month_balance)}\n"
+            f"  📈 Доходы: {fmt(month_totals['income'])}\n"
+            f"  📉 Расходы: {fmt(month_totals['expense'])}"
         )
 
     return ""
@@ -562,7 +564,9 @@ def process_message(text: str, chat_id, user_id: int, cur, conn) -> str:
                 f"🏷 {cat_name}\n"
                 f"🆔 #{new_id}\n\n"
                 f"Текущий баланс: {balance_sign}{fmt(balance)}\n"
-                f"📅 Баланс за месяц: {month_sign}{fmt(month_balance)}"
+                f"📅 Баланс за месяц: {month_sign}{fmt(month_balance)}\n"
+                f"  📈 Доходы: {fmt(month_totals['income'])}\n"
+                f"  📉 Расходы: {fmt(month_totals['expense'])}"
             )
 
     # Default
