@@ -156,7 +156,7 @@ def handle_analytics(cur):
     totals["month_expense"] = month_row["month_expense"]
     totals["month_turnover"] = month_row["month_income"] + month_row["month_expense"]
 
-    # Разбивка по кассам (номерам из whitelist)
+    # Разбивка по кассам (номерам из whitelist), с учётом переводов между кассами
     cur.execute(f"""
         SELECT w.id AS whitelist_id, w.name, w.phone,
                COALESCE(SUM(CASE WHEN t.type='income' THEN t.amount ELSE 0 END),0)::float AS total_income,
@@ -172,24 +172,26 @@ def handle_analytics(cur):
     """)
     by_wallet = [dict(r) for r in cur.fetchall()]
 
-    # Операции без привязки к номеру (внесены через веб-интерфейс)
     cur.execute(f"""
-        SELECT COALESCE(SUM(CASE WHEN type='income' THEN amount ELSE 0 END),0)::float AS total_income,
-               COALESCE(SUM(CASE WHEN type='expense' THEN amount ELSE 0 END),0)::float AS total_expense,
-               COALESCE(SUM(CASE WHEN type='income' AND date_trunc('month', date) = date_trunc('month', CURRENT_DATE) THEN amount ELSE 0 END),0)::float AS month_income,
-               COALESCE(SUM(CASE WHEN type='expense' AND date_trunc('month', date) = date_trunc('month', CURRENT_DATE) THEN amount ELSE 0 END),0)::float AS month_expense,
-               COUNT(*) AS tx_count
-        FROM {SCHEMA}.transactions
-        WHERE whitelist_id IS NULL
+        SELECT
+            w.id AS whitelist_id,
+            COALESCE(SUM(CASE WHEN tr.to_whitelist_id = w.id THEN tr.amount ELSE 0 END),0)::float AS transfers_in,
+            COALESCE(SUM(CASE WHEN tr.from_whitelist_id = w.id THEN tr.amount ELSE 0 END),0)::float AS transfers_out,
+            COALESCE(SUM(CASE WHEN tr.to_whitelist_id = w.id AND date_trunc('month', tr.date) = date_trunc('month', CURRENT_DATE) THEN tr.amount ELSE 0 END),0)::float AS month_transfers_in,
+            COALESCE(SUM(CASE WHEN tr.from_whitelist_id = w.id AND date_trunc('month', tr.date) = date_trunc('month', CURRENT_DATE) THEN tr.amount ELSE 0 END),0)::float AS month_transfers_out
+        FROM {SCHEMA}.bot_whitelist w
+        LEFT JOIN {SCHEMA}.wallet_transfers tr ON tr.from_whitelist_id = w.id OR tr.to_whitelist_id = w.id
+        WHERE w.is_active = TRUE
+        GROUP BY w.id
     """)
-    unassigned_row = cur.fetchone()
-    if unassigned_row and unassigned_row["tx_count"] > 0:
-        by_wallet.append({
-            "whitelist_id": None,
-            "name": "Без привязки",
-            "phone": "",
-            **dict(unassigned_row),
-        })
+    transfers_by_wallet = {r["whitelist_id"]: dict(r) for r in cur.fetchall()}
+
+    for w in by_wallet:
+        tr = transfers_by_wallet.get(w["whitelist_id"], {})
+        w["total_income"] += tr.get("transfers_in", 0)
+        w["total_expense"] += tr.get("transfers_out", 0)
+        w["month_income"] += tr.get("month_transfers_in", 0)
+        w["month_expense"] += tr.get("month_transfers_out", 0)
 
     return resp(200, {"monthly": monthly, "by_category": by_category, "totals": totals, "by_wallet": by_wallet})
 

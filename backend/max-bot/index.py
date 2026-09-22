@@ -117,26 +117,51 @@ def get_whitelist_entry(user_id: int, cur):
 
 
 def get_totals_by_whitelist(whitelist_id: int, cur):
+    wl_id = int(whitelist_id)
     cur.execute(f"""
         SELECT
             COALESCE(SUM(CASE WHEN type='income' THEN amount ELSE 0 END), 0)::float AS income,
             COALESCE(SUM(CASE WHEN type='expense' THEN amount ELSE 0 END), 0)::float AS expense
         FROM {SCHEMA}.transactions
-        WHERE whitelist_id = {int(whitelist_id)}
+        WHERE whitelist_id = {wl_id}
     """)
-    return dict(cur.fetchone())
+    totals = dict(cur.fetchone())
+    cur.execute(f"""
+        SELECT
+            COALESCE(SUM(CASE WHEN to_whitelist_id = {wl_id} THEN amount ELSE 0 END), 0)::float AS transfers_in,
+            COALESCE(SUM(CASE WHEN from_whitelist_id = {wl_id} THEN amount ELSE 0 END), 0)::float AS transfers_out
+        FROM {SCHEMA}.wallet_transfers
+        WHERE from_whitelist_id = {wl_id} OR to_whitelist_id = {wl_id}
+    """)
+    tr = cur.fetchone()
+    totals["income"] += tr["transfers_in"]
+    totals["expense"] += tr["transfers_out"]
+    return totals
 
 
 def get_totals_by_whitelist_month(whitelist_id: int, cur):
+    wl_id = int(whitelist_id)
     cur.execute(f"""
         SELECT
             COALESCE(SUM(CASE WHEN type='income' THEN amount ELSE 0 END), 0)::float AS income,
             COALESCE(SUM(CASE WHEN type='expense' THEN amount ELSE 0 END), 0)::float AS expense
         FROM {SCHEMA}.transactions
-        WHERE whitelist_id = {int(whitelist_id)}
+        WHERE whitelist_id = {wl_id}
           AND date_trunc('month', date) = date_trunc('month', CURRENT_DATE)
     """)
-    return dict(cur.fetchone())
+    totals = dict(cur.fetchone())
+    cur.execute(f"""
+        SELECT
+            COALESCE(SUM(CASE WHEN to_whitelist_id = {wl_id} THEN amount ELSE 0 END), 0)::float AS transfers_in,
+            COALESCE(SUM(CASE WHEN from_whitelist_id = {wl_id} THEN amount ELSE 0 END), 0)::float AS transfers_out
+        FROM {SCHEMA}.wallet_transfers
+        WHERE (from_whitelist_id = {wl_id} OR to_whitelist_id = {wl_id})
+          AND date_trunc('month', date) = date_trunc('month', CURRENT_DATE)
+    """)
+    tr = cur.fetchone()
+    totals["income"] += tr["transfers_in"]
+    totals["expense"] += tr["transfers_out"]
+    return totals
 
 
 def fmt(amount):
@@ -424,6 +449,92 @@ def handle_income_client(text: str, user_id: int, cur, conn) -> str:
     return ""
 
 
+def handle_transfer(text: str, user_id: int, cur, conn) -> str:
+    """Пошаговый диалог: перевод между кассами → выбор кассы-получателя → сумма → запись."""
+    session = get_session(user_id, cur)
+    state = session["state"]
+    data = session["data"]
+    t = text.strip()
+
+    if t.lower() in ("/отмена", "отмена", "/cancel"):
+        clear_session(user_id, cur, conn)
+        return "❌ Перевод отменён."
+
+    # Шаг 1 — выбор кассы-получателя по номеру из списка
+    if state == "transfer_pick_wallet":
+        wallets = data.get("wallets", [])
+        try:
+            idx = int(t) - 1
+            if 0 <= idx < len(wallets):
+                chosen = wallets[idx]
+                data["to_id"] = chosen["id"]
+                data["to_name"] = chosen["name"]
+                save_session(user_id, "transfer_enter_amount", data, cur, conn)
+                return (
+                    f"✅ Получатель: {chosen['name']}\n\n"
+                    f"Введите сумму перевода (₽):\n"
+                    f"(или с описанием: 5000 на аренду)"
+                )
+            else:
+                return f"Введите номер от 1 до {len(wallets)}:"
+        except ValueError:
+            return "Введите номер кассы из списка:"
+
+    # Шаг 2 — сумма и описание
+    if state == "transfer_enter_amount":
+        m = re.match(r'^(\d[\d\s]*)\s*(.*)$', t)
+        if not m:
+            return "Введите сумму цифрами (например: 5000):"
+        try:
+            amount = float(m.group(1).replace(' ', ''))
+        except ValueError:
+            return "Введите сумму цифрами (например: 5000):"
+        if amount <= 0:
+            return "Сумма должна быть больше нуля:"
+        description = m.group(2).strip() or "Перевод между кассами"
+
+        wl = get_whitelist_entry(user_id, cur)
+        if not wl:
+            clear_session(user_id, cur, conn)
+            return "🔒 Ваш номер не привязан к кассе. Перевод невозможен."
+
+        cur.execute(f"""
+            INSERT INTO {SCHEMA}.wallet_transfers (from_whitelist_id, to_whitelist_id, amount, description, date)
+            VALUES ({int(wl['id'])}, {int(data['to_id'])}, {amount}, %s, CURRENT_DATE)
+            RETURNING id
+        """, (description,))
+        conn.commit()
+        new_id = cur.fetchone()["id"]
+        clear_session(user_id, cur, conn)
+
+        from_totals = get_totals_by_whitelist(wl["id"], cur)
+        from_balance = from_totals["income"] - from_totals["expense"]
+        to_totals = get_totals_by_whitelist(data["to_id"], cur)
+        to_balance = to_totals["income"] - to_totals["expense"]
+
+        notify_other_numbers(
+            user_id,
+            f"🔁 Перевод между кассами:\n\n"
+            f"{wl['name']} → {data['to_name']}\n"
+            f"💬 {description}\n"
+            f"💰 {fmt(amount)}\n"
+            f"🆔 #{new_id}",
+            cur,
+        )
+
+        return (
+            f"✅ Перевод выполнен!\n\n"
+            f"📤 {wl['name']} → 📥 {data['to_name']}\n"
+            f"💬 {description}\n"
+            f"💰 {fmt(amount)}\n"
+            f"🆔 #{new_id}\n\n"
+            f"📱 Ваша касса ({wl['name']}): {fmt(from_balance)}\n"
+            f"📱 Касса {data['to_name']}: {fmt(to_balance)}"
+        )
+
+    return ""
+
+
 def process_message(text: str, chat_id, user_id: int, cur, conn) -> str:
     t = text.strip().lower()
 
@@ -433,6 +544,8 @@ def process_message(text: str, chat_id, user_id: int, cur, conn) -> str:
         return handle_add_client(text, user_id, cur, conn)
     if session["state"].startswith("income_"):
         return handle_income_client(text, user_id, cur, conn)
+    if session["state"].startswith("transfer_"):
+        return handle_transfer(text, user_id, cur, conn)
 
     # /mychatid — узнать свой chat_id для настройки 2FA
     if t in ("/mychatid", "mychatid"):
@@ -560,6 +673,7 @@ def process_message(text: str, chat_id, user_id: int, cur, conn) -> str:
             "📋 Команды:\n"
             "📊 /баланс — текущий баланс\n"
             "📱 /мой_баланс — моя личная статистика\n"
+            "🔁 /перевод — перевести деньги между кассами\n"
             "📈 /доход — записать оплату от клиента\n"
             "📈 /доходы — сумма всех поступлений\n"
             "📉 /расходы — анализ трат\n"
@@ -641,6 +755,29 @@ def process_message(text: str, chat_id, user_id: int, cur, conn) -> str:
         return (
             f"📉 Расходы всего: {fmt(totals['expense'])}\n\n"
             f"Топ категорий:\n{lines or '  Нет данных'}"
+        )
+
+    # /перевод — перевод денег между кассами
+    if t in ("/перевод", "перевод", "/transfer"):
+        wl = get_whitelist_entry(user_id, cur)
+        if not wl:
+            return "🔒 Ваш номер не привязан к кассе. Перевод недоступен."
+        cur.execute(f"""
+            SELECT id, name FROM {SCHEMA}.bot_whitelist
+            WHERE is_active = TRUE AND id != {int(wl['id'])}
+            ORDER BY created_at
+        """)
+        rows = cur.fetchall()
+        if not rows:
+            return "Нет других касс для перевода."
+        wallets = [{"id": r["id"], "name": r["name"]} for r in rows]
+        lines = "\n".join(f"{i+1}. {w['name']}" for i, w in enumerate(wallets))
+        save_session(user_id, "transfer_pick_wallet", {"wallets": wallets}, cur, conn)
+        return (
+            f"🔁 Перевод между кассами\n\n"
+            f"Выберите кассу-получателя (введите номер):\n\n"
+            f"{lines}\n\n"
+            f"(Для отмены — /отмена)"
         )
 
     # /новый_клиент
