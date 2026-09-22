@@ -95,6 +95,28 @@ def get_totals_month(cur):
     return dict(cur.fetchone())
 
 
+def get_whitelist_entry(user_id: int, cur):
+    """Возвращает запись whitelist (id, name, phone) для user_id, либо None."""
+    if not user_id:
+        return None
+    cur.execute(
+        f"SELECT id, name, phone FROM {SCHEMA}.bot_whitelist WHERE user_id = {int(user_id)} AND is_active = TRUE LIMIT 1"
+    )
+    row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def get_totals_by_whitelist(whitelist_id: int, cur):
+    cur.execute(f"""
+        SELECT
+            COALESCE(SUM(CASE WHEN type='income' THEN amount ELSE 0 END), 0)::float AS income,
+            COALESCE(SUM(CASE WHEN type='expense' THEN amount ELSE 0 END), 0)::float AS expense
+        FROM {SCHEMA}.transactions
+        WHERE whitelist_id = {int(whitelist_id)}
+    """)
+    return dict(cur.fetchone())
+
+
 def fmt(amount):
     return f"{amount:,.0f} ₽".replace(",", " ")
 
@@ -320,9 +342,12 @@ def handle_income_client(text: str, user_id: int, cur, conn) -> str:
         row = cur.fetchone()
         cat_id = row["id"] if row else "NULL"
 
+        wl = get_whitelist_entry(user_id, cur)
+        wl_id_sql = str(wl["id"]) if wl else "NULL"
+
         cur.execute(f"""
-            INSERT INTO {SCHEMA}.transactions (type, amount, category_id, client_id, description, date)
-            VALUES ('income', {amount}, {cat_id}, {int(data['client_id'])}, %s, CURRENT_DATE)
+            INSERT INTO {SCHEMA}.transactions (type, amount, category_id, client_id, description, date, whitelist_id)
+            VALUES ('income', {amount}, {cat_id}, {int(data['client_id'])}, %s, CURRENT_DATE, {wl_id_sql})
             RETURNING id
         """, (description,))
         conn.commit()
@@ -337,16 +362,28 @@ def handle_income_client(text: str, user_id: int, cur, conn) -> str:
         month_balance = month_totals["income"] - month_totals["expense"]
         month_sign = "+" if month_balance >= 0 else ""
 
+        own_block = ""
+        if wl:
+            own_totals = get_totals_by_whitelist(wl["id"], cur)
+            own_balance = own_totals["income"] - own_totals["expense"]
+            own_sign = "+" if own_balance >= 0 else ""
+            own_block = (
+                f"\n\n📱 {wl['name']} ({wl['phone']}):\n"
+                f"  📈 Доходы: {fmt(own_totals['income'])}\n"
+                f"  📉 Расходы: {fmt(own_totals['expense'])}\n"
+                f"  💰 Баланс: {own_sign}{fmt(own_balance)}"
+            )
+
         return (
             f"✅ Доход записан!\n\n"
             f"👤 {data['client_name']}\n"
             f"💬 {description}\n"
             f"💰 +{fmt(amount)}\n"
-            f"🆔 #{new_id}\n\n"
-            f"Текущий баланс: {sign}{fmt(balance)}\n"
-            f"📅 Баланс за месяц: {month_sign}{fmt(month_balance)}\n"
-            f"  📈 Доходы: {fmt(month_totals['income'])}\n"
-            f"  📉 Расходы: {fmt(month_totals['expense'])}"
+            f"🆔 #{new_id}\n"
+            f"{own_block}\n\n"
+            f"🏦 Общая касса: {sign}{fmt(balance)}\n"
+            f"📅 За месяц: {month_sign}{fmt(month_balance)} "
+            f"(📈{fmt(month_totals['income'])} / 📉{fmt(month_totals['expense'])})"
         )
 
     return ""
@@ -534,10 +571,13 @@ def process_message(text: str, chat_id, user_id: int, cur, conn) -> str:
                     if any(w in desc_lower for w in freelance_words) and any(w in cname for w in ["фриланс", "проект", "клиент"]):
                         category_id = cat["id"]; break
 
+            wl = get_whitelist_entry(user_id, cur)
+            wl_id_sql = str(wl["id"]) if wl else "NULL"
+
             cat_sql = str(category_id) if category_id else "NULL"
             cur.execute(f"""
-                INSERT INTO {SCHEMA}.transactions (type, amount, category_id, description, date)
-                VALUES ('{tx_type}', {amount}, {cat_sql}, %s, CURRENT_DATE)
+                INSERT INTO {SCHEMA}.transactions (type, amount, category_id, description, date, whitelist_id)
+                VALUES ('{tx_type}', {amount}, {cat_sql}, %s, CURRENT_DATE, {wl_id_sql})
                 RETURNING id
             """, (description,))
             conn.commit()
@@ -557,16 +597,28 @@ def process_message(text: str, chat_id, user_id: int, cur, conn) -> str:
             month_balance = month_totals["income"] - month_totals["expense"]
             month_sign = "+" if month_balance >= 0 else ""
 
+            own_block = ""
+            if wl:
+                own_totals = get_totals_by_whitelist(wl["id"], cur)
+                own_balance = own_totals["income"] - own_totals["expense"]
+                own_sign = "+" if own_balance >= 0 else ""
+                own_block = (
+                    f"\n\n📱 {wl['name']} ({wl['phone']}):\n"
+                    f"  📈 Доходы: {fmt(own_totals['income'])}\n"
+                    f"  📉 Расходы: {fmt(own_totals['expense'])}\n"
+                    f"  💰 Баланс: {own_sign}{fmt(own_balance)}"
+                )
+
             return (
                 f"{icon} {tx_word} записан!\n\n"
                 f"💬 {description}\n"
                 f"💰 {sign_out}{fmt(amount)}\n"
                 f"🏷 {cat_name}\n"
-                f"🆔 #{new_id}\n\n"
-                f"Текущий баланс: {balance_sign}{fmt(balance)}\n"
-                f"📅 Баланс за месяц: {month_sign}{fmt(month_balance)}\n"
-                f"  📈 Доходы: {fmt(month_totals['income'])}\n"
-                f"  📉 Расходы: {fmt(month_totals['expense'])}"
+                f"🆔 #{new_id}"
+                f"{own_block}\n\n"
+                f"🏦 Общая касса: {balance_sign}{fmt(balance)}\n"
+                f"📅 За месяц: {month_sign}{fmt(month_balance)} "
+                f"(📈{fmt(month_totals['income'])} / 📉{fmt(month_totals['expense'])})"
             )
 
     # Default
