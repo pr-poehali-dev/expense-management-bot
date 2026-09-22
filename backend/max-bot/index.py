@@ -74,6 +74,16 @@ def send_message(chat_id, text):
         pass
 
 
+def notify_other_numbers(exclude_user_id: int, text: str, cur):
+    """Рассылает уведомление всем привязанным номерам, кроме автора операции."""
+    cur.execute(f"""
+        SELECT user_id FROM {SCHEMA}.bot_whitelist
+        WHERE is_active = TRUE AND user_id IS NOT NULL AND user_id != {int(exclude_user_id)}
+    """)
+    for row in cur.fetchall():
+        send_message(row["user_id"], text)
+
+
 def get_totals(cur):
     cur.execute(f"""
         SELECT
@@ -386,6 +396,18 @@ def handle_income_client(text: str, user_id: int, cur, conn) -> str:
                 f"  💰 Баланс: {own_sign}{fmt(own_balance)}"
             )
 
+        author_name = wl["name"] if wl else "неизвестный номер"
+        notify_other_numbers(
+            user_id,
+            f"🔔 Новая операция от {author_name}:\n\n"
+            f"👤 {data['client_name']}\n"
+            f"💬 {description}\n"
+            f"💰 +{fmt(amount)}\n"
+            f"🆔 #{new_id}\n\n"
+            f"🏦 Общая касса: {sign}{fmt(balance)}",
+            cur,
+        )
+
         return (
             f"✅ Доход записан!\n\n"
             f"👤 {data['client_name']}\n"
@@ -501,6 +523,19 @@ def process_message(text: str, chat_id, user_id: int, cur, conn) -> str:
                     f"  📉 Расходы: {fmt(own_totals['expense'])}\n"
                     f"  💰 Баланс: {own_sign}{fmt(own_balance)}"
                 )
+
+            author_name = wl["name"] if wl else "неизвестный номер"
+            notify_other_numbers(
+                user_id,
+                f"🔔 Новая операция от {author_name}:\n\n"
+                f"{icon} {tx_word}\n"
+                f"💬 {description}\n"
+                f"💰 {sign_out}{fmt(amount)}\n"
+                f"🏷 {cat_name}\n"
+                f"🆔 #{new_id}\n\n"
+                f"🏦 Общая касса: {balance_sign}{fmt(balance)}",
+                cur,
+            )
 
             return (
                 f"{icon} {tx_word} записан!\n\n"
