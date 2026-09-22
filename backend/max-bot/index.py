@@ -416,6 +416,105 @@ def process_message(text: str, chat_id, user_id: int, cur, conn) -> str:
     if t in ("/mychatid", "mychatid"):
         return f"🆔 Ваш Chat ID: {chat_id}\n\nСкопируйте это число и вставьте в секрет MAX_BOT_ADMIN_CHAT_ID"
 
+    # Быстрое добавление транзакции: -10000 хлеб  или  +50000 зарплата
+    # Проверяем ДО текстовых команд, чтобы слова вроде "баланс"/"доход" в описании
+    # не перехватывались как запрос статистики (например: "-100000 стартовый баланс")
+    quick_match = re.match(r'^([+\-−])?\s*(\d[\d\s]*)\s+(.+)$', text.strip())
+    if quick_match:
+        sign_char = quick_match.group(1) or ''
+        amount_raw = quick_match.group(2).replace(' ', '')
+        description = quick_match.group(3).strip()
+        try:
+            amount = float(amount_raw)
+        except ValueError:
+            amount = 0
+        if amount > 0:
+            # Определяем тип: - или − → расход, + → доход, без знака → расход
+            tx_type = 'income' if sign_char == '+' else 'expense'
+
+            # Ищем подходящую категорию по ключевым словам описания
+            cur.execute(f"""
+                SELECT id, name FROM {SCHEMA}.categories
+                WHERE type = '{tx_type}'
+                ORDER BY id LIMIT 10
+            """)
+            cats = cur.fetchall()
+            category_id = cats[0]["id"] if cats else None  # дефолт — первая категория
+
+            # Попытка подобрать категорию по описанию
+            desc_lower = description.lower()
+            food_words = ["хлеб", "еда", "продукт", "магазин", "кофе", "обед", "ужин", "завтрак", "пицца", "кафе", "ресторан", "супермаркет", "пятёрочка", "перекрёсток"]
+            transport_words = ["такси", "метро", "автобус", "бензин", "заправка", "uber", "яндекс", "транспорт"]
+            house_words = ["аренда", "квартира", "жкх", "коммунал", "электричество", "интернет"]
+            salary_words = ["зарплата", "оклад", "аванс", "премия", "бонус"]
+            freelance_words = ["фриланс", "проект", "заказ", "клиент", "оплата", "перевод"]
+
+            for cat in cats:
+                cname = cat["name"].lower()
+                if tx_type == 'expense':
+                    if any(w in desc_lower for w in food_words) and any(w in cname for w in ["питание", "еда", "продукт", "кафе"]):
+                        category_id = cat["id"]; break
+                    if any(w in desc_lower for w in transport_words) and any(w in cname for w in ["транспорт", "авто", "дорог"]):
+                        category_id = cat["id"]; break
+                    if any(w in desc_lower for w in house_words) and any(w in cname for w in ["жильё", "аренда", "жкх", "коммун"]):
+                        category_id = cat["id"]; break
+                else:
+                    if any(w in desc_lower for w in salary_words) and any(w in cname for w in ["зарплат", "оклад"]):
+                        category_id = cat["id"]; break
+                    if any(w in desc_lower for w in freelance_words) and any(w in cname for w in ["фриланс", "проект", "клиент"]):
+                        category_id = cat["id"]; break
+
+            wl = get_whitelist_entry(user_id, cur)
+            wl_id_sql = str(wl["id"]) if wl else "NULL"
+
+            cat_sql = str(category_id) if category_id else "NULL"
+            cur.execute(f"""
+                INSERT INTO {SCHEMA}.transactions (type, amount, category_id, description, date, whitelist_id)
+                VALUES ('{tx_type}', {amount}, {cat_sql}, %s, CURRENT_DATE, {wl_id_sql})
+                RETURNING id
+            """, (description,))
+            conn.commit()
+            new_id = cur.fetchone()["id"]
+
+            # Находим имя категории для отображения
+            cat_name = next((c["name"] for c in cats if c["id"] == category_id), "—")
+            icon = "📈" if tx_type == 'income' else "📉"
+            sign_out = "+" if tx_type == 'income' else "−"
+            tx_word = "Доход" if tx_type == 'income' else "Расход"
+
+            totals = get_totals(cur)
+            balance = totals["income"] - totals["expense"]
+            balance_sign = "+" if balance >= 0 else ""
+
+            month_totals = get_totals_month(cur)
+            month_balance = month_totals["income"] - month_totals["expense"]
+            month_sign = "+" if month_balance >= 0 else ""
+
+            own_block = ""
+            if wl:
+                own_totals = get_totals_by_whitelist(wl["id"], cur)
+                own_balance = own_totals["income"] - own_totals["expense"]
+                own_sign = "+" if own_balance >= 0 else ""
+                own_block = (
+                    f"\n\n📱 Ваша касса ({wl['name']}):\n"
+                    f"  📈 Доходы: {fmt(own_totals['income'])}\n"
+                    f"  📉 Расходы: {fmt(own_totals['expense'])}\n"
+                    f"  💰 Баланс: {own_sign}{fmt(own_balance)}"
+                )
+
+            return (
+                f"{icon} {tx_word} записан!\n\n"
+                f"💬 {description}\n"
+                f"💰 {sign_out}{fmt(amount)}\n"
+                f"🏷 {cat_name}\n"
+                f"🆔 #{new_id}"
+                f"{own_block}\n\n"
+                f"🏦 Общая касса (все номера):\n"
+                f"  📈 Доходы: {fmt(totals['income'])}\n"
+                f"  📉 Расходы: {fmt(totals['expense'])}\n"
+                f"  💰 Баланс: {balance_sign}{fmt(balance)}"
+            )
+
     # /start или /помощь
     if t in ("/start", "start", "/помощь", "помощь", "/help"):
         return (
@@ -566,103 +665,6 @@ def process_message(text: str, chat_id, user_id: int, cur, conn) -> str:
             icon = "🔴" if r["status"] == "overdue" else "🟡"
             lines.append(f"{icon} {r['title']}: {fmt(r['amount'])} — {r['due_date']}")
         return "🔔 Предстоящие платежи:\n\n" + "\n".join(lines)
-
-    # Быстрое добавление транзакции: -10000 хлеб  или  +50000 зарплата
-    quick_match = re.match(r'^([+\-−])?\s*(\d[\d\s]*)\s+(.+)$', text.strip())
-    if quick_match:
-        sign_char = quick_match.group(1) or ''
-        amount_raw = quick_match.group(2).replace(' ', '')
-        description = quick_match.group(3).strip()
-        try:
-            amount = float(amount_raw)
-        except ValueError:
-            amount = 0
-        if amount > 0:
-            # Определяем тип: - или − → расход, + → доход, без знака → расход
-            tx_type = 'income' if sign_char == '+' else 'expense'
-
-            # Ищем подходящую категорию по ключевым словам описания
-            cur.execute(f"""
-                SELECT id, name FROM {SCHEMA}.categories
-                WHERE type = '{tx_type}'
-                ORDER BY id LIMIT 10
-            """)
-            cats = cur.fetchall()
-            category_id = cats[0]["id"] if cats else None  # дефолт — первая категория
-
-            # Попытка подобрать категорию по описанию
-            desc_lower = description.lower()
-            food_words = ["хлеб", "еда", "продукт", "магазин", "кофе", "обед", "ужин", "завтрак", "пицца", "кафе", "ресторан", "супермаркет", "пятёрочка", "перекрёсток"]
-            transport_words = ["такси", "метро", "автобус", "бензин", "заправка", "uber", "яндекс", "транспорт"]
-            house_words = ["аренда", "квартира", "жкх", "коммунал", "электричество", "интернет"]
-            salary_words = ["зарплата", "оклад", "аванс", "премия", "бонус"]
-            freelance_words = ["фриланс", "проект", "заказ", "клиент", "оплата", "перевод"]
-
-            for cat in cats:
-                cname = cat["name"].lower()
-                if tx_type == 'expense':
-                    if any(w in desc_lower for w in food_words) and any(w in cname for w in ["питание", "еда", "продукт", "кафе"]):
-                        category_id = cat["id"]; break
-                    if any(w in desc_lower for w in transport_words) and any(w in cname for w in ["транспорт", "авто", "дорог"]):
-                        category_id = cat["id"]; break
-                    if any(w in desc_lower for w in house_words) and any(w in cname for w in ["жильё", "аренда", "жкх", "коммун"]):
-                        category_id = cat["id"]; break
-                else:
-                    if any(w in desc_lower for w in salary_words) and any(w in cname for w in ["зарплат", "оклад"]):
-                        category_id = cat["id"]; break
-                    if any(w in desc_lower for w in freelance_words) and any(w in cname for w in ["фриланс", "проект", "клиент"]):
-                        category_id = cat["id"]; break
-
-            wl = get_whitelist_entry(user_id, cur)
-            wl_id_sql = str(wl["id"]) if wl else "NULL"
-
-            cat_sql = str(category_id) if category_id else "NULL"
-            cur.execute(f"""
-                INSERT INTO {SCHEMA}.transactions (type, amount, category_id, description, date, whitelist_id)
-                VALUES ('{tx_type}', {amount}, {cat_sql}, %s, CURRENT_DATE, {wl_id_sql})
-                RETURNING id
-            """, (description,))
-            conn.commit()
-            new_id = cur.fetchone()["id"]
-
-            # Находим имя категории для отображения
-            cat_name = next((c["name"] for c in cats if c["id"] == category_id), "—")
-            icon = "📈" if tx_type == 'income' else "📉"
-            sign_out = "+" if tx_type == 'income' else "−"
-            tx_word = "Доход" if tx_type == 'income' else "Расход"
-
-            totals = get_totals(cur)
-            balance = totals["income"] - totals["expense"]
-            balance_sign = "+" if balance >= 0 else ""
-
-            month_totals = get_totals_month(cur)
-            month_balance = month_totals["income"] - month_totals["expense"]
-            month_sign = "+" if month_balance >= 0 else ""
-
-            own_block = ""
-            if wl:
-                own_totals = get_totals_by_whitelist(wl["id"], cur)
-                own_balance = own_totals["income"] - own_totals["expense"]
-                own_sign = "+" if own_balance >= 0 else ""
-                own_block = (
-                    f"\n\n📱 Ваша касса ({wl['name']}):\n"
-                    f"  📈 Доходы: {fmt(own_totals['income'])}\n"
-                    f"  📉 Расходы: {fmt(own_totals['expense'])}\n"
-                    f"  💰 Баланс: {own_sign}{fmt(own_balance)}"
-                )
-
-            return (
-                f"{icon} {tx_word} записан!\n\n"
-                f"💬 {description}\n"
-                f"💰 {sign_out}{fmt(amount)}\n"
-                f"🏷 {cat_name}\n"
-                f"🆔 #{new_id}"
-                f"{own_block}\n\n"
-                f"🏦 Общая касса (все номера):\n"
-                f"  📈 Доходы: {fmt(totals['income'])}\n"
-                f"  📉 Расходы: {fmt(totals['expense'])}\n"
-                f"  💰 Баланс: {balance_sign}{fmt(balance)}"
-            )
 
     # Default
     totals = get_totals(cur)
