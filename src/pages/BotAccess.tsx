@@ -32,6 +32,9 @@ export default function BotAccess() {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ phone: '', name: '' });
   const [togglingId, setTogglingId] = useState<number | null>(null);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editForm, setEditForm] = useState({ phone: '', name: '' });
+  const [editSaving, setEditSaving] = useState(false);
 
   useEffect(() => { loadList(); }, []);
 
@@ -62,6 +65,31 @@ export default function BotAccess() {
       setList(prev => prev.map(e => e.id === entry.id ? { ...e, ...updated } : e));
     } finally {
       setTogglingId(null);
+    }
+  }
+
+  function startEdit(entry: WhitelistEntry) {
+    setEditingId(entry.id);
+    setEditForm({ phone: entry.phone, name: entry.name });
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+    setEditForm({ phone: '', name: '' });
+  }
+
+  async function saveEdit(entry: WhitelistEntry) {
+    if (editForm.phone.replace(/\D/g, '').length < 10) return;
+    setEditSaving(true);
+    try {
+      const updated = await api.whitelist.update(entry.id, {
+        phone: editForm.phone.trim(),
+        name: editForm.name.trim(),
+      });
+      setList(prev => prev.map(e => e.id === entry.id ? { ...e, ...updated } : e));
+      cancelEdit();
+    } finally {
+      setEditSaving(false);
     }
   }
 
@@ -189,51 +217,126 @@ export default function BotAccess() {
                 <th className="text-left py-2 px-2 text-xs text-muted-foreground font-medium">Имя</th>
                 <th className="text-left py-2 px-2 text-xs text-muted-foreground font-medium">Статус</th>
                 <th className="text-left py-2 px-2 text-xs text-muted-foreground font-medium">В боте</th>
-                <th className="w-16" />
+                <th className="w-24" />
               </tr>
             </thead>
             <tbody>
               {list.map(entry => (
                 <tr key={entry.id} className="border-b border-border/40 hover:bg-secondary/30 transition-colors">
-                  <td className="py-3 px-2 font-mono-ibm text-sm text-foreground">
-                    {formatPhone(entry.phone)}
-                  </td>
-                  <td className="py-3 px-2 text-sm text-muted-foreground">
-                    {entry.name || <span className="text-muted-foreground/40">—</span>}
-                  </td>
-                  <td className="py-3 px-2">
-                    {entry.is_active ? (
-                      <span className="badge-income">Разрешён</span>
-                    ) : (
-                      <span className="badge-expense">Заблокирован</span>
-                    )}
-                  </td>
-                  <td className="py-3 px-2">
-                    {entry.user_id ? (
-                      <span className="flex items-center gap-1 text-xs text-income">
-                        <Icon name="CheckCircle" size={12} />
-                        Привязан
-                      </span>
-                    ) : (
-                      <span className="text-xs text-muted-foreground/50">Ещё не писал</span>
-                    )}
-                  </td>
-                  <td className="py-3 px-2">
-                    <button
-                      onClick={() => toggleActive(entry)}
-                      disabled={togglingId === entry.id}
-                      title={entry.is_active ? 'Заблокировать' : 'Разрешить'}
-                      className={`w-7 h-7 flex items-center justify-center rounded transition-colors text-muted-foreground
-                        ${entry.is_active
-                          ? 'hover:bg-red-500/10 hover:text-red-400'
-                          : 'hover:bg-emerald-500/10 hover:text-emerald-400'}`}
-                    >
-                      {togglingId === entry.id
-                        ? <Icon name="Loader2" size={13} className="animate-spin" />
-                        : <Icon name={entry.is_active ? 'UserX' : 'UserCheck'} size={13} />
-                      }
-                    </button>
-                  </td>
+                  {editingId === entry.id ? (
+                    <>
+                      <td className="py-2 px-2">
+                        <input
+                          type="tel"
+                          className="fin-input font-mono-ibm text-sm py-1"
+                          value={editForm.phone}
+                          onChange={e => setEditForm({ ...editForm, phone: e.target.value })}
+                          onKeyDown={e => e.key === 'Enter' && saveEdit(entry)}
+                          autoFocus
+                        />
+                      </td>
+                      <td className="py-2 px-2">
+                        <input
+                          type="text"
+                          className="fin-input text-sm py-1"
+                          value={editForm.name}
+                          onChange={e => setEditForm({ ...editForm, name: e.target.value })}
+                          onKeyDown={e => e.key === 'Enter' && saveEdit(entry)}
+                        />
+                      </td>
+                      <td className="py-3 px-2">
+                        {entry.is_active ? (
+                          <span className="badge-income">Разрешён</span>
+                        ) : (
+                          <span className="badge-expense">Заблокирован</span>
+                        )}
+                      </td>
+                      <td className="py-3 px-2">
+                        {entry.user_id ? (
+                          <span className="flex items-center gap-1 text-xs text-income">
+                            <Icon name="CheckCircle" size={12} />
+                            Привязан
+                          </span>
+                        ) : (
+                          <span className="text-xs text-muted-foreground/50">Ещё не писал</span>
+                        )}
+                      </td>
+                      <td className="py-3 px-2">
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => saveEdit(entry)}
+                            disabled={editSaving || editForm.phone.replace(/\D/g, '').length < 10}
+                            title="Сохранить"
+                            className="w-7 h-7 flex items-center justify-center rounded text-muted-foreground hover:bg-emerald-500/10 hover:text-emerald-400 transition-colors"
+                          >
+                            {editSaving
+                              ? <Icon name="Loader2" size={13} className="animate-spin" />
+                              : <Icon name="Check" size={13} />
+                            }
+                          </button>
+                          <button
+                            onClick={cancelEdit}
+                            disabled={editSaving}
+                            title="Отмена"
+                            className="w-7 h-7 flex items-center justify-center rounded text-muted-foreground hover:bg-red-500/10 hover:text-red-400 transition-colors"
+                          >
+                            <Icon name="X" size={13} />
+                          </button>
+                        </div>
+                      </td>
+                    </>
+                  ) : (
+                    <>
+                      <td className="py-3 px-2 font-mono-ibm text-sm text-foreground">
+                        {formatPhone(entry.phone)}
+                      </td>
+                      <td className="py-3 px-2 text-sm text-muted-foreground">
+                        {entry.name || <span className="text-muted-foreground/40">—</span>}
+                      </td>
+                      <td className="py-3 px-2">
+                        {entry.is_active ? (
+                          <span className="badge-income">Разрешён</span>
+                        ) : (
+                          <span className="badge-expense">Заблокирован</span>
+                        )}
+                      </td>
+                      <td className="py-3 px-2">
+                        {entry.user_id ? (
+                          <span className="flex items-center gap-1 text-xs text-income">
+                            <Icon name="CheckCircle" size={12} />
+                            Привязан
+                          </span>
+                        ) : (
+                          <span className="text-xs text-muted-foreground/50">Ещё не писал</span>
+                        )}
+                      </td>
+                      <td className="py-3 px-2">
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => startEdit(entry)}
+                            title="Изменить"
+                            className="w-7 h-7 flex items-center justify-center rounded text-muted-foreground hover:bg-primary/10 hover:text-primary transition-colors"
+                          >
+                            <Icon name="Pencil" size={13} />
+                          </button>
+                          <button
+                            onClick={() => toggleActive(entry)}
+                            disabled={togglingId === entry.id}
+                            title={entry.is_active ? 'Заблокировать' : 'Разрешить'}
+                            className={`w-7 h-7 flex items-center justify-center rounded transition-colors text-muted-foreground
+                              ${entry.is_active
+                                ? 'hover:bg-red-500/10 hover:text-red-400'
+                                : 'hover:bg-emerald-500/10 hover:text-emerald-400'}`}
+                          >
+                            {togglingId === entry.id
+                              ? <Icon name="Loader2" size={13} className="animate-spin" />
+                              : <Icon name={entry.is_active ? 'UserX' : 'UserCheck'} size={13} />
+                            }
+                          </button>
+                        </div>
+                      </td>
+                    </>
+                  )}
                 </tr>
               ))}
             </tbody>
