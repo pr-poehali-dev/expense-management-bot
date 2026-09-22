@@ -117,6 +117,18 @@ def get_totals_by_whitelist(whitelist_id: int, cur):
     return dict(cur.fetchone())
 
 
+def get_totals_by_whitelist_month(whitelist_id: int, cur):
+    cur.execute(f"""
+        SELECT
+            COALESCE(SUM(CASE WHEN type='income' THEN amount ELSE 0 END), 0)::float AS income,
+            COALESCE(SUM(CASE WHEN type='expense' THEN amount ELSE 0 END), 0)::float AS expense
+        FROM {SCHEMA}.transactions
+        WHERE whitelist_id = {int(whitelist_id)}
+          AND date_trunc('month', date) = date_trunc('month', CURRENT_DATE)
+    """)
+    return dict(cur.fetchone())
+
+
 def fmt(amount):
     return f"{amount:,.0f} ₽".replace(",", " ")
 
@@ -412,12 +424,41 @@ def process_message(text: str, chat_id, user_id: int, cur, conn) -> str:
             "  +50000 зарплата → доход\n\n"
             "📋 Команды:\n"
             "📊 /баланс — текущий баланс\n"
+            "📱 /мой_баланс — моя личная статистика\n"
             "📈 /доход — записать оплату от клиента\n"
             "📈 /доходы — сумма всех поступлений\n"
             "📉 /расходы — анализ трат\n"
             "👥 /клиенты — база клиентов\n"
             "➕ /новый_клиент — добавить клиента\n"
             "🔔 /напоминания — предстоящие платежи"
+        )
+
+    # /мой_баланс — личная статистика конкретного номера
+    if t in ("/мой_баланс", "мой_баланс", "мой баланс", "/my_balance"):
+        wl = get_whitelist_entry(user_id, cur)
+        if not wl:
+            return (
+                "🔒 Ваш номер не привязан к учёту.\n\n"
+                "Отправьте /привязать +79001234567, указав ваш номер."
+            )
+        totals = get_totals_by_whitelist(wl["id"], cur)
+        balance = totals["income"] - totals["expense"]
+        sign = "+" if balance >= 0 else ""
+
+        month_totals = get_totals_by_whitelist_month(wl["id"], cur)
+        month_balance = month_totals["income"] - month_totals["expense"]
+        month_sign = "+" if month_balance >= 0 else ""
+
+        return (
+            f"📱 Личная статистика — {wl['name']} ({wl['phone']}):\n\n"
+            f"📈 Доходы всего: {fmt(totals['income'])}\n"
+            f"📉 Расходы всего: {fmt(totals['expense'])}\n"
+            f"💰 Баланс: {sign}{fmt(balance)}\n"
+            f"{'━' * 22}\n"
+            f"📅 За текущий месяц:\n"
+            f"  📈 Доходы: {fmt(month_totals['income'])}\n"
+            f"  📉 Расходы: {fmt(month_totals['expense'])}\n"
+            f"  💰 Баланс: {month_sign}{fmt(month_balance)}"
         )
 
     # /баланс
