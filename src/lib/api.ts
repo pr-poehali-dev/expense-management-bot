@@ -68,10 +68,29 @@ export interface Client {
   stats?: { total_income: number; total_expense: number };
 }
 
+export interface WalletStats {
+  whitelist_id: number | null;
+  name: string;
+  phone: string;
+  total_income: number;
+  total_expense: number;
+  month_income: number;
+  month_expense: number;
+  tx_count: number;
+}
+
 export interface AnalyticsData {
   monthly: { month: string; month_key: string; income: number; expense: number }[];
   by_category: { id: number; name: string; color: string; icon: string; type: string; total: number; tx_count: number }[];
-  totals: { total_income: number; total_expense: number; total_transactions: number };
+  totals: {
+    total_income: number;
+    total_expense: number;
+    total_transactions: number;
+    month_income: number;
+    month_expense: number;
+    month_turnover: number;
+  };
+  by_wallet: WalletStats[];
 }
 
 export const api = {

@@ -1,13 +1,17 @@
 import { useEffect, useState } from 'react';
 import Icon from '@/components/ui/icon';
-import { api, Transaction, Reminder } from '@/lib/api';
+import { api, Transaction, Reminder, WalletStats } from '@/lib/api';
 import { formatCurrency, formatDate } from '@/data/mockData';
 
 export default function Dashboard() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [reminders, setReminders] = useState<Reminder[]>([]);
   const [monthly, setMonthly] = useState<{ month: string; month_key: string; income: number; expense: number }[]>([]);
-  const [totals, setTotals] = useState({ total_income: 0, total_expense: 0, total_transactions: 0 });
+  const [totals, setTotals] = useState({
+    total_income: 0, total_expense: 0, total_transactions: 0,
+    month_income: 0, month_expense: 0, month_turnover: 0,
+  });
+  const [byWallet, setByWallet] = useState<WalletStats[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -20,6 +24,7 @@ export default function Dashboard() {
       setReminders(remRes.reminders);
       setMonthly(analRes.monthly);
       setTotals(analRes.totals);
+      setByWallet(analRes.by_wallet || []);
     }).finally(() => setLoading(false));
   }, []);
 
@@ -52,7 +57,7 @@ export default function Dashboard() {
       </div>
 
       {/* KPI Cards */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-4 gap-4">
         <div className="stat-card">
           <div className="flex items-center justify-between mb-3">
             <span className="section-title">Баланс</span>
@@ -94,7 +99,64 @@ export default function Dashboard() {
             {transactions.filter(t => t.type === 'expense').length} расходов
           </div>
         </div>
+
+        <div className="stat-card">
+          <div className="flex items-center justify-between mb-3">
+            <span className="section-title">Оборот за месяц</span>
+            <div className="w-7 h-7 rounded bg-amber-500/10 flex items-center justify-center">
+              <Icon name="Repeat" size={13} className="text-amber-400" />
+            </div>
+          </div>
+          <div className="font-mono-ibm text-2xl font-semibold text-foreground">{formatCurrency(totals.month_turnover)}</div>
+          <div className="flex items-center gap-2 mt-2 text-xs text-muted-foreground">
+            <span className="text-income">+{formatCurrency(totals.month_income)}</span>
+            <span className="text-expense">−{formatCurrency(totals.month_expense)}</span>
+          </div>
+        </div>
       </div>
+
+      {/* Раздельные кассы по номерам */}
+      {byWallet.length > 0 && (
+        <div className="stat-card">
+          <div className="flex items-center justify-between mb-4">
+            <span className="text-sm font-medium text-foreground">Раздельные кассы</span>
+            <span className="text-xs text-muted-foreground">{byWallet.length} {byWallet.length === 1 ? 'касса' : 'кассы'}</span>
+          </div>
+          <div className={`grid gap-3 ${byWallet.length >= 3 ? 'grid-cols-3' : byWallet.length === 2 ? 'grid-cols-2' : 'grid-cols-1'}`}>
+            {byWallet.map((w) => {
+              const wBalance = w.total_income - w.total_expense;
+              return (
+                <div key={w.whitelist_id ?? 'unassigned'} className="rounded-md border border-border/60 p-4">
+                  <div className="flex items-center gap-2 mb-3">
+                    <div className="w-7 h-7 rounded bg-primary/10 flex items-center justify-center flex-shrink-0">
+                      <Icon name={w.whitelist_id ? 'Smartphone' : 'HelpCircle'} size={13} className="text-primary" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium text-foreground truncate">{w.name}</div>
+                      {w.phone && <div className="text-[10px] text-muted-foreground font-mono-ibm">{w.phone}</div>}
+                    </div>
+                  </div>
+                  <div className="font-mono-ibm text-lg font-semibold text-foreground mb-2">{formatCurrency(wBalance)}</div>
+                  <div className="flex items-center gap-3 text-xs mb-1">
+                    <span className="text-income flex items-center gap-1">
+                      <Icon name="ArrowDownLeft" size={11} />
+                      {formatCurrency(w.total_income)}
+                    </span>
+                    <span className="text-expense flex items-center gap-1">
+                      <Icon name="ArrowUpRight" size={11} />
+                      {formatCurrency(w.total_expense)}
+                    </span>
+                  </div>
+                  <div className="text-[10px] text-muted-foreground pt-1 border-t border-border/40 mt-2">
+                    За месяц: <span className="text-income">+{formatCurrency(w.month_income)}</span>{' '}
+                    <span className="text-expense">−{formatCurrency(w.month_expense)}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-3 gap-4">
         {/* Chart */}

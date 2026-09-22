@@ -143,7 +143,55 @@ def handle_analytics(cur):
         FROM {SCHEMA}.transactions
     """)
     totals = dict(cur.fetchone())
-    return resp(200, {"monthly": monthly, "by_category": by_category, "totals": totals})
+
+    # Оборот (доходы + расходы) за текущий календарный месяц
+    cur.execute(f"""
+        SELECT COALESCE(SUM(CASE WHEN type='income' THEN amount ELSE 0 END),0)::float AS month_income,
+               COALESCE(SUM(CASE WHEN type='expense' THEN amount ELSE 0 END),0)::float AS month_expense
+        FROM {SCHEMA}.transactions
+        WHERE date_trunc('month', date) = date_trunc('month', CURRENT_DATE)
+    """)
+    month_row = dict(cur.fetchone())
+    totals["month_income"] = month_row["month_income"]
+    totals["month_expense"] = month_row["month_expense"]
+    totals["month_turnover"] = month_row["month_income"] + month_row["month_expense"]
+
+    # Разбивка по кассам (номерам из whitelist)
+    cur.execute(f"""
+        SELECT w.id AS whitelist_id, w.name, w.phone,
+               COALESCE(SUM(CASE WHEN t.type='income' THEN t.amount ELSE 0 END),0)::float AS total_income,
+               COALESCE(SUM(CASE WHEN t.type='expense' THEN t.amount ELSE 0 END),0)::float AS total_expense,
+               COALESCE(SUM(CASE WHEN t.type='income' AND date_trunc('month', t.date) = date_trunc('month', CURRENT_DATE) THEN t.amount ELSE 0 END),0)::float AS month_income,
+               COALESCE(SUM(CASE WHEN t.type='expense' AND date_trunc('month', t.date) = date_trunc('month', CURRENT_DATE) THEN t.amount ELSE 0 END),0)::float AS month_expense,
+               COUNT(t.id) AS tx_count
+        FROM {SCHEMA}.bot_whitelist w
+        LEFT JOIN {SCHEMA}.transactions t ON t.whitelist_id = w.id
+        WHERE w.is_active = TRUE
+        GROUP BY w.id, w.name, w.phone
+        ORDER BY w.created_at
+    """)
+    by_wallet = [dict(r) for r in cur.fetchall()]
+
+    # Операции без привязки к номеру (внесены через веб-интерфейс)
+    cur.execute(f"""
+        SELECT COALESCE(SUM(CASE WHEN type='income' THEN amount ELSE 0 END),0)::float AS total_income,
+               COALESCE(SUM(CASE WHEN type='expense' THEN amount ELSE 0 END),0)::float AS total_expense,
+               COALESCE(SUM(CASE WHEN type='income' AND date_trunc('month', date) = date_trunc('month', CURRENT_DATE) THEN amount ELSE 0 END),0)::float AS month_income,
+               COALESCE(SUM(CASE WHEN type='expense' AND date_trunc('month', date) = date_trunc('month', CURRENT_DATE) THEN amount ELSE 0 END),0)::float AS month_expense,
+               COUNT(*) AS tx_count
+        FROM {SCHEMA}.transactions
+        WHERE whitelist_id IS NULL
+    """)
+    unassigned_row = cur.fetchone()
+    if unassigned_row and unassigned_row["tx_count"] > 0:
+        by_wallet.append({
+            "whitelist_id": None,
+            "name": "Без привязки",
+            "phone": "",
+            **dict(unassigned_row),
+        })
+
+    return resp(200, {"monthly": monthly, "by_category": by_category, "totals": totals, "by_wallet": by_wallet})
 
 
 def handle_reminders(method, params, body, cur, conn):
