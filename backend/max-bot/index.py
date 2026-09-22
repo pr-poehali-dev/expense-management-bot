@@ -380,7 +380,7 @@ def handle_income_client(text: str, user_id: int, cur, conn) -> str:
             own_balance = own_totals["income"] - own_totals["expense"]
             own_sign = "+" if own_balance >= 0 else ""
             own_block = (
-                f"\n\n📱 {wl['name']} ({wl['phone']}):\n"
+                f"\n\n📱 Ваша касса ({wl['name']}):\n"
                 f"  📈 Доходы: {fmt(own_totals['income'])}\n"
                 f"  📉 Расходы: {fmt(own_totals['expense'])}\n"
                 f"  💰 Баланс: {own_sign}{fmt(own_balance)}"
@@ -391,11 +391,12 @@ def handle_income_client(text: str, user_id: int, cur, conn) -> str:
             f"👤 {data['client_name']}\n"
             f"💬 {description}\n"
             f"💰 +{fmt(amount)}\n"
-            f"🆔 #{new_id}\n"
+            f"🆔 #{new_id}"
             f"{own_block}\n\n"
-            f"🏦 Общая касса: {sign}{fmt(balance)}\n"
-            f"📅 За месяц: {month_sign}{fmt(month_balance)} "
-            f"(📈{fmt(month_totals['income'])} / 📉{fmt(month_totals['expense'])})"
+            f"🏦 Общая касса (все номера):\n"
+            f"  📈 Доходы: {fmt(totals['income'])}\n"
+            f"  📉 Расходы: {fmt(totals['expense'])}\n"
+            f"  💰 Баланс: {sign}{fmt(balance)}"
         )
 
     return ""
@@ -644,7 +645,7 @@ def process_message(text: str, chat_id, user_id: int, cur, conn) -> str:
                 own_balance = own_totals["income"] - own_totals["expense"]
                 own_sign = "+" if own_balance >= 0 else ""
                 own_block = (
-                    f"\n\n📱 {wl['name']} ({wl['phone']}):\n"
+                    f"\n\n📱 Ваша касса ({wl['name']}):\n"
                     f"  📈 Доходы: {fmt(own_totals['income'])}\n"
                     f"  📉 Расходы: {fmt(own_totals['expense'])}\n"
                     f"  💰 Баланс: {own_sign}{fmt(own_balance)}"
@@ -657,9 +658,10 @@ def process_message(text: str, chat_id, user_id: int, cur, conn) -> str:
                 f"🏷 {cat_name}\n"
                 f"🆔 #{new_id}"
                 f"{own_block}\n\n"
-                f"🏦 Общая касса: {balance_sign}{fmt(balance)}\n"
-                f"📅 За месяц: {month_sign}{fmt(month_balance)} "
-                f"(📈{fmt(month_totals['income'])} / 📉{fmt(month_totals['expense'])})"
+                f"🏦 Общая касса (все номера):\n"
+                f"  📈 Доходы: {fmt(totals['income'])}\n"
+                f"  📉 Расходы: {fmt(totals['expense'])}\n"
+                f"  💰 Баланс: {balance_sign}{fmt(balance)}"
             )
 
     # Default
