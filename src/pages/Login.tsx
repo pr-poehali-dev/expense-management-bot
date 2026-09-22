@@ -8,15 +8,103 @@ interface Props {
 }
 
 export default function Login({ onLogin }: Props) {
+  const [mode, setMode] = useState<'password' | 'phone'>('password');
   const [step, setStep] = useState<'credentials' | 'code'>('credentials');
   const [login, setLogin] = useState('');
   const [password, setPassword] = useState('');
+  const [phone, setPhone] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [code, setCode] = useState(['', '', '', '', '', '']);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [resendTimer, setResendTimer] = useState(0);
   const codeRefs = useRef<(HTMLInputElement | null)[]>([]);
+
+  function switchMode(next: 'password' | 'phone') {
+    setMode(next);
+    setStep('credentials');
+    setError('');
+    setCode(['', '', '', '', '', '']);
+  }
+
+  async function handlePhoneSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError('');
+    if (!phone.trim()) return;
+    setLoading(true);
+    try {
+      const res = await fetch(AUTH_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: 'phone', phone: phone.trim() }),
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        setError(data.error || 'Не удалось отправить код');
+        return;
+      }
+      setStep('code');
+      setResendTimer(60);
+      setTimeout(() => codeRefs.current[0]?.focus(), 100);
+    } catch {
+      setError('Ошибка соединения. Попробуйте позже.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handlePhoneCode(e: React.FormEvent) {
+    e.preventDefault();
+    setError('');
+    const codeStr = code.join('');
+    if (codeStr.length < 6) return;
+    setLoading(true);
+    try {
+      const res = await fetch(AUTH_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: 'phone', phone: phone.trim(), code: codeStr }),
+      });
+      const data = await res.json();
+      if (data.ok && data.token) {
+        localStorage.setItem('auth_token', data.token);
+        onLogin(data.token);
+      } else {
+        setError(data.error || 'Неверный код');
+        setCode(['', '', '', '', '', '']);
+        setTimeout(() => codeRefs.current[0]?.focus(), 50);
+      }
+    } catch {
+      setError('Ошибка соединения. Попробуйте позже.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handlePhoneResend() {
+    if (resendTimer > 0) return;
+    setError('');
+    setCode(['', '', '', '', '', '']);
+    setLoading(true);
+    try {
+      const res = await fetch(AUTH_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: 'phone', phone: phone.trim() }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        setResendTimer(60);
+        setTimeout(() => codeRefs.current[0]?.focus(), 50);
+      } else {
+        setError(data.error || 'Ошибка отправки кода');
+      }
+    } catch {
+      setError('Ошибка соединения.');
+    } finally {
+      setLoading(false);
+    }
+  }
 
   useEffect(() => {
     if (resendTimer <= 0) return;
@@ -139,8 +227,32 @@ export default function Login({ onLogin }: Props) {
           </p>
         </div>
 
-        {/* Step 1 — credentials */}
+        {/* Mode switcher */}
         {step === 'credentials' && (
+          <div className="flex gap-1 bg-secondary/50 rounded-md p-1 mb-4">
+            <button
+              type="button"
+              onClick={() => switchMode('password')}
+              className={`flex-1 flex items-center justify-center gap-1.5 text-xs py-2 rounded transition-colors ${
+                mode === 'password' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <Icon name="KeyRound" size={13} /> Логин и пароль
+            </button>
+            <button
+              type="button"
+              onClick={() => switchMode('phone')}
+              className={`flex-1 flex items-center justify-center gap-1.5 text-xs py-2 rounded transition-colors ${
+                mode === 'phone' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <Icon name="Smartphone" size={13} /> По телефону
+            </button>
+          </div>
+        )}
+
+        {/* Step 1 — credentials (password mode) */}
+        {step === 'credentials' && mode === 'password' && (
           <form onSubmit={handleCredentials} className="stat-card space-y-4">
             <div>
               <label className="block text-xs text-muted-foreground mb-1.5">Логин</label>
@@ -194,9 +306,49 @@ export default function Login({ onLogin }: Props) {
           </form>
         )}
 
+        {/* Step 1 — phone mode */}
+        {step === 'credentials' && mode === 'phone' && (
+          <form onSubmit={handlePhoneSubmit} className="stat-card space-y-4">
+            <div>
+              <label className="block text-xs text-muted-foreground mb-1.5">Номер телефона</label>
+              <input
+                type="tel"
+                autoComplete="tel"
+                placeholder="+7 900 000-00-00"
+                className="fin-input w-full font-mono-ibm"
+                value={phone}
+                onChange={e => { setPhone(e.target.value); setError(''); }}
+              />
+            </div>
+
+            <div className="flex items-center gap-2 text-xs text-muted-foreground bg-primary/5 rounded px-3 py-2.5">
+              <Icon name="Info" size={14} className="text-primary flex-shrink-0" />
+              Номер должен быть привязан к Max-боту. Код для входа придёт туда.
+            </div>
+
+            {error && (
+              <div className="flex items-center gap-2 text-xs text-red-400 bg-red-500/10 rounded px-3 py-2">
+                <Icon name="AlertCircle" size={13} />
+                {error}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={loading || phone.replace(/\D/g, '').length < 10}
+              className="fin-btn-primary w-full flex items-center justify-center gap-2"
+            >
+              {loading
+                ? <><Icon name="Loader2" size={14} className="animate-spin" /> Отправка кода...</>
+                : <><Icon name="MessageCircle" size={14} /> Получить код в Max</>
+              }
+            </button>
+          </form>
+        )}
+
         {/* Step 2 — 6-digit code */}
         {step === 'code' && (
-          <form onSubmit={handleCode} className="stat-card space-y-5">
+          <form onSubmit={mode === 'phone' ? handlePhoneCode : handleCode} className="stat-card space-y-5">
             <div className="flex items-center gap-2 text-xs text-muted-foreground bg-primary/5 rounded px-3 py-2.5">
               <Icon name="MessageCircle" size={14} className="text-primary flex-shrink-0" />
               Код отправлен в ваш Max-бот. Проверьте сообщения.
@@ -249,7 +401,7 @@ export default function Login({ onLogin }: Props) {
               </button>
               <button
                 type="button"
-                onClick={handleResend}
+                onClick={mode === 'phone' ? handlePhoneResend : handleResend}
                 disabled={resendTimer > 0 || loading}
                 className="text-muted-foreground hover:text-foreground transition-colors disabled:opacity-40"
               >

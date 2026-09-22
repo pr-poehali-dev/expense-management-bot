@@ -1,9 +1,12 @@
 import json
 import os
+import re
 import hashlib
 import random
 import time
 import requests
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
 CORS = {
     'Access-Control-Allow-Origin': '*',
@@ -12,10 +15,25 @@ CORS = {
 }
 
 MAX_API = "https://platform-api.max.ru"
+SCHEMA = "t_p41757892_expense_management_b"
 
 # Хранилище кодов в памяти: { code: (expires_at, login) }
 # Коды живут 5 минут, сбрасываются при рестарте функции
 _codes: dict = {}
+
+# Отдельное хранилище кодов для входа по номеру телефона: { code: (expires_at, phone) }
+_phone_codes: dict = {}
+
+
+def get_conn():
+    return psycopg2.connect(os.environ["DATABASE_URL"])
+
+
+def normalize_phone(phone: str) -> str:
+    digits = re.sub(r'\D', '', phone)
+    if digits.startswith('8') and len(digits) == 11:
+        digits = '7' + digits[1:]
+    return '+' + digits
 
 
 def resp(code, body):
@@ -52,6 +70,56 @@ def handler(event: dict, context) -> dict:
     # POST / с полем code — шаг 2: проверяем код, возвращаем токен
     if method == 'POST':
         body = json.loads(event.get('body') or '{}')
+
+        # Вход по номеру телефона: код приходит боту на привязанный номер
+        if body.get('mode') == 'phone':
+            phone_raw = body.get('phone', '').strip()
+            code_input = body.get('code', '').strip()
+            if not phone_raw:
+                return resp(400, {'ok': False, 'error': 'Укажите номер телефона'})
+            phone = normalize_phone(phone_raw)
+            salt = os.environ.get('AUTH_SALT', 'poehali-salt-2024')
+
+            # Шаг 2 — проверяем код
+            if code_input:
+                now = time.time()
+                entry = _phone_codes.get(code_input)
+                if not entry:
+                    return resp(401, {'ok': False, 'error': 'Неверный код'})
+                expires_at, code_phone = entry
+                if now > expires_at:
+                    _phone_codes.pop(code_input, None)
+                    return resp(401, {'ok': False, 'error': 'Код истёк, запросите новый'})
+                if code_phone != phone:
+                    return resp(401, {'ok': False, 'error': 'Неверный код'})
+                _phone_codes.pop(code_input, None)
+                token = hashlib.sha256(f'phone:{phone}:{salt}'.encode()).hexdigest()
+                return resp(200, {'ok': True, 'token': token})
+
+            # Шаг 1 — ищем привязанный активный номер в whitelist
+            conn = get_conn()
+            cur = conn.cursor(cursor_factory=RealDictCursor)
+            try:
+                cur.execute(
+                    f"SELECT user_id FROM {SCHEMA}.bot_whitelist "
+                    f"WHERE phone = %s AND is_active = TRUE AND user_id IS NOT NULL",
+                    (phone,)
+                )
+                row = cur.fetchone()
+            finally:
+                cur.close()
+                conn.close()
+
+            if not row:
+                return resp(401, {'ok': False, 'error': 'Номер не найден. Обратитесь к администратору.'})
+
+            code = str(random.randint(100000, 999999))
+            _phone_codes[code] = (time.time() + 300, phone)
+            sent = send_max_message(row['user_id'], f"🔐 Код для входа в ФинансПро: {code}\n\nДействителен 5 минут.")
+            if not sent:
+                return resp(500, {'ok': False, 'error': 'Не удалось отправить код в Max-бот'})
+            return resp(200, {'ok': True, 'message': 'Код отправлен в Max-бот'})
+
         login = body.get('login', '').strip()
         password = body.get('password', '').strip()
         code_input = body.get('code', '').strip()
