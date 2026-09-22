@@ -1,8 +1,11 @@
 """
 Webhook-обработчик для бота мессенджера Max (VK Max).
-Принимает входящие сообщения и отвечает как финансовый ассистент:
-- /start, /помощь — приветствие и список команд
+Принимает входящие сообщения и отвечает как финансовый ассистент.
+После каждого ответа показывает inline-меню с кнопками команд.
+- /start, /помощь, /меню — приветствие и меню с кнопками
 - /баланс — текущий баланс (доходы - расходы)
+- /мой_баланс — личная статистика по своей кассе
+- /перевод — перевод денег между кассами
 - /доходы — сумма доходов
 - /расходы — сумма расходов и топ-категории
 - /клиенты — количество клиентов и выручка
@@ -59,15 +62,55 @@ def is_allowed(user_id: int, cur) -> bool:
     return cur.fetchone() is not None
 
 
-def send_message(chat_id, text):
-    """Отправляет сообщение пользователю через Max Bot API."""
+def main_menu_keyboard():
+    """Клавиатура главного меню бота: набор кнопок с командами."""
+    def btn(text, payload):
+        return {"type": "callback", "text": text, "payload": payload}
+
+    return {
+        "attachments": [{
+            "type": "inline_keyboard",
+            "payload": {
+                "buttons": [
+                    [btn("📊 Баланс", "/баланс"), btn("📱 Мой баланс", "/мой_баланс")],
+                    [btn("📈 Доходы", "/доходы"), btn("📉 Расходы", "/расходы")],
+                    [btn("💰 Доход от клиента", "/доход"), btn("🔁 Перевод", "/перевод")],
+                    [btn("👥 Клиенты", "/клиенты"), btn("➕ Новый клиент", "/новый_клиент")],
+                    [btn("🔔 Напоминания", "/напоминания")],
+                ]
+            }
+        }]
+    }
+
+
+def send_message(chat_id, text, keyboard=None):
+    """Отправляет сообщение пользователю через Max Bot API.
+    keyboard: опциональный словарь с ключом attachments (inline-клавиатура)."""
     token = get_token()
+    payload = {"text": text}
+    if keyboard:
+        payload["attachments"] = keyboard["attachments"]
     try:
         requests.post(
             f"{MAX_API}/messages",
             headers={"Authorization": token},
             params={"chat_id": chat_id},
-            json={"text": text},
+            json=payload,
+            timeout=10,
+        )
+    except Exception:
+        pass
+
+
+def answer_callback(callback_id, text=""):
+    """Отвечает на нажатие inline-кнопки (убирает 'часики' у пользователя)."""
+    token = get_token()
+    try:
+        requests.post(
+            f"{MAX_API}/answers",
+            headers={"Authorization": token},
+            params={"callback_id": callback_id},
+            json={"notification": text} if text else {},
             timeout=10,
         )
     except Exception:
@@ -663,13 +706,14 @@ def process_message(text: str, chat_id, user_id: int, cur, conn) -> str:
                 f"  💰 Баланс: {balance_sign}{fmt(balance)}"
             )
 
-    # /start или /помощь
-    if t in ("/start", "start", "/помощь", "помощь", "/help"):
+    # /start, /помощь или /меню
+    if t in ("/start", "start", "/помощь", "помощь", "/help", "/меню", "меню", "/menu"):
         return (
             "👋 Привет! Я финансовый ассистент ФинансПро.\n\n"
             "⚡ Быстрое добавление:\n"
             "  −10000 хлеб → расход\n"
             "  +50000 зарплата → доход\n\n"
+            "👇 Выберите действие кнопкой или командой:\n\n"
             "📋 Команды:\n"
             "📊 /баланс — текущий баланс\n"
             "📱 /мой_баланс — моя личная статистика\n"
@@ -963,9 +1007,43 @@ def handler(event: dict, context) -> dict:
                     return {"statusCode": 200, "headers": CORS, "body": "ok"}
                 conn.commit()
                 reply = process_message(text, chat_id, user_id_int, cur, conn)
+                session_after = get_session(user_id_int, cur)
+                # Показываем меню, только если пользователь не в середине многошагового диалога
+                show_menu = not session_after["state"]
             finally:
                 cur.close()
                 conn.close()
-            send_message(chat_id, reply)
+            send_message(chat_id, reply, main_menu_keyboard() if show_menu else None)
+
+    # Нажатие на inline-кнопку меню
+    if update_type == "message_callback":
+        callback = update.get("callback", {})
+        callback_id = callback.get("callback_id")
+        payload = callback.get("payload", "")
+        user = callback.get("user", {})
+        message = update.get("message", {})
+        recipient = message.get("recipient", {})
+        chat_id = recipient.get("chat_id") or user.get("user_id")
+        user_id_int = user.get("user_id") or chat_id
+
+        if callback_id:
+            answer_callback(callback_id)
+
+        if payload and chat_id:
+            conn = get_conn()
+            cur = conn.cursor(cursor_factory=RealDictCursor)
+            try:
+                if not is_allowed(user_id_int, cur):
+                    conn.commit()
+                    send_message(chat_id, "🔒 Доступ закрыт. Отправьте /привязать +79001234567")
+                    return {"statusCode": 200, "headers": CORS, "body": "ok"}
+                conn.commit()
+                reply = process_message(payload, chat_id, user_id_int, cur, conn)
+                session_after = get_session(user_id_int, cur)
+                show_menu = not session_after["state"]
+            finally:
+                cur.close()
+                conn.close()
+            send_message(chat_id, reply, main_menu_keyboard() if show_menu else None)
 
     return {"statusCode": 200, "headers": CORS, "body": "ok"}
